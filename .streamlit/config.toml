@@ -1,0 +1,56 @@
+[theme]
+base = "light"
+primaryColor = "#9A7B4F"             # bronze — drives slider, focus, accents
+backgroundColor = "#D4CDBF"          # darker warm taupe page
+secondaryBackgroundColor = "#E9E4DB" # cream — expanders, widgets, panels
+textColor = "#4A4640"                # soft charcoal
+font = "serif"
+
+[server]
+headless = true
+
+# CORS and XSRF protection are Streamlit defaults (both true) and are left ON
+# deliberately - they were previously switched off, which is harmless on
+# localhost but a real weakness on a public URL. Do not disable them to fix an
+# embedding or iframe problem without understanding what that opens up.
+enableCORS = true
+enableXsrfProtection = true
+
+# The app takes no files, but Streamlit's PUT /_stcore/upload_file/ endpoint
+# answers any client anyway and holds each upload in process memory, up to
+# this size (200 MB default) per file with no total cap. 2026-10-15 security
+# audit: a scripted client could park gigabytes in the one process every
+# visitor shares. 1 MB is the floor. Add a file_uploader and this needs a
+# budget sized for it - the test that pins this also forbids one.
+maxUploadSize = 1
+
+[browser]
+# Streamlit's usage telemetry defaults to ON and phones home on every run.
+# PRIVACY.md tells visitors there is "no analytics, advertising, attribution or
+# crash-reporting SDK" - so leaving the default in place would have made the
+# published policy false. It also leaves the host outside src/netguard.py,
+# which only wraps this engine's own market-data calls, so the egress
+# allowlist never saw it. Off, and asserted by a test.
+gatherUsageStats = false
+
+[client]
+# Never render Python tracebacks to visitors: a stack trace leaks file paths,
+# library versions and internal structure. Errors still appear in full in the
+# server logs, where they belong.
+showErrorDetails = false
+
+# A visitor is a VIEWER, not an operator. Streamlit's default toolbar hands
+# every anonymous visitor "Clear cache", "Rerun" and "Settings" - operator
+# actions against shared server state on a single-process deploy. "viewer"
+# removes that menu, which is the whole admin story here: this app has no
+# accounts, no roles and no privileged data, so there is no admin to
+# impersonate - only these operator buttons, and now they are gone.
+#
+# Honest limit: this hides the UI affordance, not the protocol. The
+# clear-cache message is now refused in main.py (2026-10-15 security audit:
+# it emptied every visitor's cache); the rerun message still exists, so a
+# determined visitor crafting websocket frames can rerun their OWN session.
+# That is bounded to a denial-of-service, never a data leak, because the cache
+# holds only public market data any visitor can already re-request - and it
+# is bounded further by MAX_UNIVERSE and the cache budget in src/ingestion.py.
+toolbarMode = "viewer"
