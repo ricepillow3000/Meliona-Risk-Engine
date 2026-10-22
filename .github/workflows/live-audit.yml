@@ -1,0 +1,153 @@
+# Live audit: the engine against REAL Yahoo Finance data, and the deployed site
+# in a real browser. GitHub's runners have open internet; the cloud sandboxes
+# that build this project do not, so this is where "is it live data?" gets an
+# answer instead of an assumption. Run it from the Actions tab (Run workflow),
+# or push to a claude/** branch.
+name: Live audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: Deployed app to check in a browser
+        default: https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app
+  push:
+    branches: ["claude/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  live-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      SITE_URL: ${{ inputs.site_url || 'https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install -r requirements.txt ruff bandit pip-audit
+          npm install --no-save playwright@1.56.1
+          npx playwright install --with-deps chromium
+
+      - name: 0. Self-check (lint, bandit, engine tests with live checks, narrative) + dependency CVEs
+        run: |
+          python -m tools.check
+          # Pillow 12.3 (via Streamlit, which caps it <13 in every release up to
+          # 1.66) has 24 CVEs fixed only in 13.0: 8 in parsing crafted image
+          # files (2026-10-20) and 16 more (2026-10-22). The app opens no image
+          # a visitor supplies: John chose a written exception, 2026-10-20. It
+          # expires itself:
+          # test_every_pip_audit_exception_is_unreachable_and_expires fails the
+          # day Streamlit accepts Pillow 13, or if the app ever takes a file.
+          python -m pip_audit -r requirements.txt \
+            --ignore-vuln CVE-2026-112395 \
+            --ignore-vuln CVE-2026-112397 \
+            --ignore-vuln CVE-2026-112400 \
+            --ignore-vuln CVE-2026-112404 \
+            --ignore-vuln CVE-2026-112895 \
+            --ignore-vuln CVE-2026-112896 \
+            --ignore-vuln CVE-2026-112897 \
+            --ignore-vuln CVE-2026-112899 \
+            --ignore-vuln CVE-2026-112402 \
+            --ignore-vuln CVE-2026-112900 \
+            --ignore-vuln CVE-2026-112893 \
+            --ignore-vuln CVE-2026-112392 \
+            --ignore-vuln CVE-2026-112891 \
+            --ignore-vuln CVE-2026-112405 \
+            --ignore-vuln CVE-2026-112390 \
+            --ignore-vuln CVE-2026-112401 \
+            --ignore-vuln CVE-2026-112901 \
+            --ignore-vuln CVE-2026-112391 \
+            --ignore-vuln CVE-2026-112894 \
+            --ignore-vuln CVE-2026-112406 \
+            --ignore-vuln CVE-2026-112399 \
+            --ignore-vuln CVE-2026-112892 \
+            --ignore-vuln CVE-2026-112393 \
+            --ignore-vuln CVE-2026-112396
+      - name: 1. Provenance - engine prices vs raw Yahoo API, ^IRX vs the Treasury
+        if: always()
+        run: python -m tools.live_provenance
+      - name: 3. Batch audit - every preset on live data, each check cites its source
+        if: always()
+        run: python -m tests.batch_audit
+      - name: 4. Walkthrough on live data - NaN, contradictions, unexplained jargon
+        if: always()
+        run: python -m tools.demo_check
+      - name: 4b. Crisis record on live data - the table the Conviction sentences are read from
+        if: always()
+        run: python -m src.conviction
+      - name: 5. Deployed site in a browser - skeleton, top bar, headline, errors
+        if: always()
+        env:
+          # on main the deployed site must be serving this very commit
+          EXPECT_BUILD: ${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+        run: |
+          mkdir -p site-shots
+          node tools/site_check.mjs "$SITE_URL" site-shots
+      - name: 6. Deployed site - outside-in security probe
+        if: always()
+        run: python -m tools.security_probe "$SITE_URL"
+
+      # This commit's own app, started here on live data - what merging will ship.
+      - name: 7. Start this commit's app (launch files installed as in Procfile)
+        if: always()
+        run: |
+          python -m tools.public_files
+          nohup streamlit run main.py --server.port 8501 --server.headless true > app.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8501/_stcore/health && break; sleep 2; done
+      - name: 8. This commit - launch basics (SEO, OG, 404, first paint), security, recruiter walk
+        if: always()
+        run: |
+          mkdir -p site-shots/local walk/local
+          SEO=1 node tools/site_check.mjs http://127.0.0.1:8501 site-shots/local
+          python -m tools.security_probe http://127.0.0.1:8501
+          node tools/recruiter_walk.mjs http://127.0.0.1:8501 walk/local
+      - name: 8b. This commit - every phone, tablet and desktop (overlap, sideways, cut-off text, clickable)
+        if: always()
+        run: |
+          mkdir -p site-shots/devices
+          node tools/device_check.mjs http://127.0.0.1:8501 site-shots/devices
+      - name: 9. Deployed site - recruiter walk (informational until this branch is deployed)
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p walk/deployed
+          node tools/recruiter_walk.mjs "$SITE_URL" walk/deployed
+      # Every inch: boot, every button's flight, every word and chart, the
+      # Gungnir maths, every preset, every crisis under both engines, the book,
+      # every tab and drawer, every flyer, and the Risk Topology map run three
+      # times under each calibration on both sides of the trade.
+      - name: 10. This commit - deep scan, full depth, live data
+        if: always()
+        run: |
+          mkdir -p scan/local
+          export SCAN_PRESETS="$(python -c 'import json; from src.ingestion import PRESETS; print(json.dumps(list(PRESETS)))')"
+          export SCAN_SCENARIOS="$(python -c 'import json; from src.scenarios import HISTORICAL_REGIMES as H; print(json.dumps(list(H)))')"
+          DEPTH=full node tools/deep_scan.mjs http://127.0.0.1:8501 scan/local
+      - name: 11. Deployed site - deep scan (informational until this branch is deployed)
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p scan/deployed
+          export SCAN_PRESETS="$(python -c 'import json; from src.ingestion import PRESETS; print(json.dumps(list(PRESETS)))')"
+          export SCAN_SCENARIOS="$(python -c 'import json; from src.scenarios import HISTORICAL_REGIMES as H; print(json.dumps(list(H)))')"
+          node tools/deep_scan.mjs "$SITE_URL" scan/deployed
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-audit
+          path: |
+            audit/batch_audit_*
+            site-shots/
+            walk/
+            scan/
+            app.log

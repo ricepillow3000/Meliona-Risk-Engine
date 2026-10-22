@@ -1,0 +1,260 @@
+"""
+Risk Topology map payload - the ONE place the map's numbers are assembled.
+
+`main.py` renders `prototypes/war_room.html` with this dict spliced in, and
+`tests/batch_audit.py` re-derives every field of it from raw prices to prove
+the map is measurement, not decoration. Keeping the builder here (instead of
+inline in the Streamlit script) is what makes that audit possible: the audited
+payload and the shipped payload are byte-identical because they are the same
+function call.
+
+Provenance of each field:
+  base/assets      - rolling beta (63d Cov/Var) and realized vol (21d std,
+                     annualized) computed from yfinance daily returns.
+  cal/muV/muB      - `src.state_calibration.calibrate_state_dynamics`
+                     (AR(1) -> OU inversion, Glasserman ch. 3).
+  pairs            - `src.pairing.anchor_rank` / `pair_weights` /
+                     `backtest_pair`: ES(97.5) and cushion replayed on actual
+                     overlapping history, monthly rebalance, no lookahead.
+  hazard           - DISCLOSED POLICY, not an estimate (see HAZARD_* below).
+"""
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from src.ingestion import fetch_prices
+from src.pairing import DEFENSIVE_ANCHOR_TICKERS, anchor_rank, pair_weights, backtest_pair
+from src.risk import portfolio_daily_returns
+from src.state_calibration import calibrate_state_dynamics
+from src.covariance import TRADING_DAYS
+
+
+# Hazard perimeter policy - disclosed in the map footnote, deliberately NOT
+# calibrated: it is a risk-limit convention, and the audit checks the drawn
+# perimeter against exactly these constants.
+HAZARD_VOL_MULT = 3.0
+HAZARD_VOL_FLOOR = 0.35
+HAZARD_VOL_CAP = 0.90
+HAZARD_BETA_ADD = 0.8
+HAZARD_BETA_CAP = 1.9
+
+BETA_WINDOW = 63          # matches state_calibration.rolling_state_series
+VOL_WINDOW = 21
+
+
+def anchor_frame(returns: pd.DataFrame) -> pd.DataFrame:
+    """
+    Universe returns joined, on common days, with the defensive anchors it does
+    not already hold - a held anchor stays once, as a holding. Joining the whole
+    pool raised on the shared column, and every caller's fallback then dropped
+    all anchors: 4 of 20 presets drew no anchor pool and the Balance tab offered
+    no defensive candidates (every-pair audit, 2026-10-17). The map and the
+    Balance tab both read this, so they cannot disagree on the pool. Offline,
+    or when every anchor is held: the universe alone.
+    """
+    pool = [t for t in DEFENSIVE_ANCHOR_TICKERS if t not in returns.columns]
+    try:
+        etf = fetch_prices(pool, period="2y")
+        return returns.join(etf.pct_change().dropna(), how="inner").dropna(axis=1)
+    except Exception:  # noqa: BLE001 - offline: universe only
+        return returns
+
+
+def build_map_payload(returns: pd.DataFrame, weights: pd.Series,
+                      loaded: list[str], bearish: bool = False,
+                      days: int = 30) -> dict:
+    """
+    Assemble the Risk Topology payload from live returns. Raises if the
+    history is too short to calibrate - the map is never shown with
+    fabricated numbers.
+    """
+    try:
+        market = fetch_prices(["SPY"], period="2y").pct_change().dropna()["SPY"]
+        proxy = "S&P 500 via SPY"
+    except Exception:  # noqa: BLE001 - offline: basket proxies the market
+        market = returns.mean(axis=1)
+        proxy = "equal-weight basket (SPY unavailable)"
+
+    port = portfolio_daily_returns(returns, weights)
+    if bearish:
+        port = -port
+    cal = calibrate_state_dynamics(port, market)
+
+    # every unit on the map: universe + defensive anchor pool
+    frame = anchor_frame(returns)
+    common = frame.index.intersection(market.index)
+    # KNOWN, DISCLOSED MISMATCH (audit finding, 2026-08-25, still open):
+    # these are FULL-SAMPLE statistics, while the portfolio mark comes from
+    # calibrate_state_dynamics, whose state is a 63-day rolling beta and a
+    # 21-day realized vol. Two estimators share one plane, so a dot can sit
+    # left of the book partly because it was averaged over two years while the
+    # book was measured over the last month. Matching the windows was tried on
+    # 2026-09-02 and reverted before deploy: it moved every asset coordinate in
+    # all 19 preset universes and tests/batch_audit.py MAP-02 re-derives this
+    # definition independently, so the change could only be validated by
+    # rewriting its own verifier. Fix the pair together or not at all.
+    mvar = float(market.loc[common].var())
+    assets = []
+    for t in frame.columns:
+        b = float(frame[t].loc[common].cov(market.loc[common]) / mvar)
+        v = float(frame[t].std() * np.sqrt(TRADING_DAYS))
+        if bearish and t in loaded:
+            # The book above is negated when short, so the holdings must be
+            # too: a short of a name carries the opposite beta. Volatility is
+            # sign-invariant and stays as measured. The anchor pool is NOT
+            # held - it is the candidate hedge, bought LONG against the short
+            # (pairing.anchor_rank, direction="short") - so it stays at its own
+            # measured beta. An anchor picked from the universe itself is
+            # still drawn here, at its shorted beta, while the pair numbers
+            # hold it long: the link joins the dots, not the hedge's address.
+            b = -b
+        if np.isfinite(b) and np.isfinite(v):
+            assets.append({"t": t, "b": round(b, 3), "v": round(v, 4),
+                           "f": "Universe" if t in loaded else "Anchor pool"})
+
+    # Bon Voyage tournament: the flyer against the top anchor candidates,
+    # each linkage backtested on actual overlapping history
+    pairs = []
+    try:
+        vols = returns.std() * np.sqrt(TRADING_DAYS)
+        flyer = str(vols.idxmax())
+        bt_frame = frame.copy()
+        if bearish:
+            bt_frame[flyer] = -bt_frame[flyer]
+        rank = anchor_rank(bt_frame, flyer, direction="short" if bearish else "long")
+        corr = bt_frame.corr()
+        for an in list(rank.index[:4]):
+            pw = pair_weights(bt_frame[flyer], bt_frame[an])
+            bt = backtest_pair(bt_frame[flyer], bt_frame[an], pw["w_a"])
+            pairs.append({
+                "fl": flyer, "an": str(an),
+                "rho": round(float(corr.loc[flyer, an]), 3),
+                "wFlyer": round(float(pw["w_a"]), 4),
+                "real": {
+                    "esSolo": round(float(bt["es_solo"]), 5),
+                    "esPair": round(float(bt["es_pair"]), 5),
+                    "cushion": round(float(bt["cushion"]), 5),
+                    "volPair": round(float(bt["ann_vol_pair"]), 4),
+                    "nDays": int(bt["n_days"]),
+                },
+            })
+    except Exception:  # noqa: BLE001 - map still works without linkages
+        pairs = []
+
+    beta0 = round(float(cal["beta_now"]), 3)
+    vol0 = round(float(cal["vol_now"]), 4)
+    hvol = round(float(min(HAZARD_VOL_CAP,
+                           max(HAZARD_VOL_FLOOR, HAZARD_VOL_MULT * vol0))), 2)
+    # The beta perimeter is the disclosed policy "+0.8, capped at 1.9" applied
+    # in the direction the book actually carries market risk. A SHORT book's
+    # betas are negated, so danger is MORE NEGATIVE beta, and the long formula
+    # put the line on the wrong side of the book entirely: a -1.24 short got a
+    # perimeter at -0.44 (between the book and zero, i.e. marking de-risking as
+    # the hazard) and a -2.86 short got -2.06, which slips the 1.9 magnitude cap
+    # completely because min() picks the more negative number. Mirroring applies
+    # the same policy to |beta| and hands the sign back. `betaSign` travels with
+    # the payload so the map tests and draws the perimeter on the right side.
+    if bearish:
+        hbeta = round(float(-min(HAZARD_BETA_CAP, -beta0 + HAZARD_BETA_ADD)), 2)
+    else:
+        hbeta = round(float(min(HAZARD_BETA_CAP, beta0 + HAZARD_BETA_ADD)), 2)
+    bmax = max([a["b"] for a in assets] + [hbeta, beta0])
+    # hbeta belongs in BOTH extremes, not just the max: for a short book it is
+    # the most negative thing on the plane, and MAP-04 requires the drawn domain
+    # to contain the perimeter. (It cannot move a long book's b0 - hbeta only
+    # falls below every asset when all of them exceed 1.9, and the -1.0 floor
+    # already wins there.)
+    bmin = min([a["b"] for a in assets] + [beta0, hbeta])
+    vmax = max([a["v"] for a in assets] + [hvol, vol0])
+    # Minimum extents mirror too: a short book's content all sits left of zero,
+    # so the long window [-1, +2] would spend two thirds of the plot on empty
+    # positive beta.
+    b_lo, b_hi = (-2.0, 1.0) if bearish else (-1.0, 2.0)
+    domain = {
+        "b0": float(min(b_lo, np.floor((bmin - 0.25) * 2) / 2)),
+        "b1": float(max(b_hi, np.ceil((bmax + 0.25) * 2) / 2)),
+        "v0": 0.0,
+        "v1": float(max(1.0, np.ceil((vmax + 0.1) * 10) / 10)),
+    }
+    base_cal = cal["cal"]["base"]
+    return {
+        "base": {"beta": beta0, "vol": vol0},
+        "hazard": {"volMax": hvol, "betaMax": hbeta},
+        # +1 long book, -1 short. The map compares beta against the perimeter
+        # as `betaSign * b > betaSign * betaMax`, so the breach test, the hatch
+        # and the boundary all sit on the side the risk is actually on.
+        "betaSign": -1 if bearish else 1,
+        "assets": assets,
+        "pairs": pairs,
+        "muFlyer": 0.0, "muAnchor": 0.0, "muBook": 0.0,
+        "cal": cal["cal"], "muV": round(float(cal["muV"]), 4),
+        "muB": round(float(cal["muB"]), 3),
+        "days": days,
+        "domain": domain,
+        "live": True,
+        "provenance": f"Live · Yahoo daily closes · {cal['n_obs']} days fitted",
+        "footnote": (
+            "<b>State model:</b> OU beta and log-OU volatility, calibrated "
+            f"by AR(1) on rolling windows of the book's own daily returns "
+            f"(market: {proxy}; {cal['n_obs']} state observations; "
+            "overlapping windows smooth the mean-reversion estimate). "
+            f"Shock corr {base_cal['rho']:+.2f}, leverage "
+            f"{base_cal['lev']:+.2f}. "
+            + (f"<b>Shocks widened x{cal['dispersion']['k']:.2f}</b>, the factor "
+               "measured by walking this book's own history forward: fitted on "
+               "prior data only, the nominal 68.3% ring held "
+               f"{cal['dispersion']['coverage_raw']:.0%} of realized 30-day "
+               f"states over {cal['dispersion']['n_dates']} dates. "
+               "It prices plug-in estimation error and the overlapping-window "
+               "smoothing together, and never narrows the terrain. "
+               if cal["dispersion"].get("measured") and cal["dispersion"]["k"] > 1.0
+               else "")
+            + "Stressed = calibrated shocks x 1.4 "
+            "plus +0.10 shock corr, calm = x 0.7 (disclosed policy, not "
+            "data). Zero-drift risk view. Hazard: 3x today's vol (floored "
+            "at 35%, capped at 90%) and beta "
+            + ("-0.8 (capped at -1.9) - the short book's holdings have their "
+               "betas negated (anchor-pool names are not held and keep their "
+               "own), so the perimeter is mirrored and danger is MORE negative "
+               "beta"
+               if bearish else "+0.8 (capped at 1.9)")
+            + ". Pair numbers replay real history: monthly rebalance, no "
+            "lookahead."
+            + (" <b>Calibration clamps hit:</b> "
+               + "; ".join(cal["clamp_flags"]) + "."
+               if cal.get("clamp_flags") else "")
+        ),
+    }
+
+
+WAR_ROOM_FILE = Path(__file__).resolve().parent.parent / "prototypes" / "war_room.html"
+
+
+def war_room_html(payload: dict) -> str:
+    """
+    The Risk Topology map (prototypes/war_room.html) with the LIVE engine
+    payload spliced between its __PAYLOAD__ markers. The page renders only
+    what this payload carries: every number traces back to the yfinance
+    returns and the calibration/backtest code in src/. The file's built-in
+    demo block is replaced wholesale here, so no demo number can leak into
+    the product.
+    """
+    html = WAR_ROOM_FILE.read_text(encoding="utf-8")
+    begin, end = "/* __PAYLOAD_BEGIN__ */", "/* __PAYLOAD_END__ */"
+    i = html.index(begin) + len(begin)
+    j = html.index(end)
+    # The payload lands INSIDE a <script> block, and json.dumps does not escape
+    # "<": a string containing "</script>" would close the block early and
+    # everything after it would parse as markup. Ticker names cannot carry "<"
+    # (ingestion.VALID_TICKER), but this payload also carries engine prose and
+    # third-party strings, so escape at the splice rather than trusting the
+    # funnel. \u003c / \u003e / \u0026 are the same JSON string to the parser;
+    # \u2028 / \u2029 are JS line terminators that would break the literal.
+    blob = (json.dumps(payload, allow_nan=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("&", "\\u0026")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    return html[:i] + "\nconst DEMO = " + blob + ";\n" + html[j:]
