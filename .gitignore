@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+
+# Cached market data + provenance (regenerated on first run)
+data/*.parquet
+data/*.meta.json
+data/*.json
+
+# Local logs
+streamlit.log
+
+# Crash wire (src/observability.py): tracebacks and session refs, rotated
+# locally. Diagnostics, never an artifact - and never committed.
+logs/
+
+# Batch-audit machine dumps: ~3,900 lines of JSON per run, fully regenerable
+# with `python -m tests.batch_audit`. The human-readable .md report of each run
+# IS committed - that is the evidence; the JSON is the raw feed for tooling.
+audit/*.json
+
+# Local agent-tool state stays out; the reviewed shared skills go in
+.claude/*
+!.claude/skills/
+
+graphify-out/
+
+# Secrets - never commit. Config comes from the host environment
+# (MELIONA_CHANNEL / MELIONA_SUPPORT_EMAIL / MELIONA_MAINTENANCE), set on
+# Railway, so a .env here is only ever a local convenience.
+.env
+.env.*
+!.env.example
+secrets.toml
+.streamlit/secrets.toml
+*.pem
+*.key
+*.pfx
+credentials.json
+
+# Playwright for tools/site_check.mjs (installed by the live-audit workflow)
+node_modules/
