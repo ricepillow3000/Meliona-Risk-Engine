@@ -1,0 +1,420 @@
+# Operator runbook
+
+Everything an operator needs when something is wrong, in the order it is
+usually needed. One person runs this; the procedures assume that.
+
+## 0. Where state lives
+
+| State | Durable? | Restore |
+|---|---|---|
+| Code and config | Yes - git, mirrored on GitHub | `git checkout <sha>` and redeploy |
+| Market-data cache (`data/*.parquet`) | No - derived, regenerable | Delete it; the next page load refetches, or run `python -m tools.warm_cache` |
+| Crash logs (`logs/`) | No - rotating, size-capped | Nothing to restore; they are diagnostics |
+| User data | **None exists** | Nothing to restore (no accounts, no database) |
+
+There is no database, so there is no database restore. The recovery story is
+"redeploy the last good commit", and the recovery point is whatever is on
+`origin/main`.
+
+## 1. Kill switch
+
+Set an environment variable on the host - no redeploy, no code change:
+
+    MELEONA_MAINTENANCE=1
+    MELEONA_MAINTENANCE_NOTE=Back shortly - fixing a data feed issue.   (optional)
+
+The next page load serves the maintenance notice with the support address and
+stops before any market-data call. Unset it to bring the app back.
+
+Use it when the feed returns garbage, a bad deploy is live and a rollback is
+still minutes away, or an abuse problem needs to stop now.
+
+## 2. Hotfix and rollback (the "OTA update" of a web app)
+
+No app-store review sits in the path, so shipping a fix is a push:
+
+    git revert <bad-sha>        # or commit the fix
+    git push origin main        # host redeploys on push
+
+Rollback to a known-good release:
+
+    git checkout main
+    git reset --hard <good-sha>
+    git push --force-with-lease origin main
+
+Prefer `git revert` (forward-only history) unless the bad commit leaked
+something that must not stay in history. Re-run `python -m tests.test_engine`
+before pushing; the suite includes a full-app boot test.
+
+## 3. Crash triage
+
+Every browser session gets a random reference shown in the footer. A user
+reports it; you grep for it:
+
+    grep 9F3A2B7C logs/meleona.log*
+
+That returns the session-start line and any traceback logged during it. For a
+sweep of recent failures with no specific reference:
+
+    python -c "from src.observability import recent_incidents; print(chr(10).join(recent_incidents()))"
+
+Logs rotate at 1 MB x 3 files and hold tickers and stack traces - no personal
+data, which is what lets the privacy note say what it says.
+
+## 4. Spend and rate-limit control
+
+The engine calls no metered API and no LLM, so there is no credit balance to
+top up. The cost it *can* incur is a Yahoo rate-limit or IP ban on a shared
+free-tier egress address, so the budget is denominated in requests:
+
+- `src/netguard.MAX_REQUESTS_PER_DAY` (default 5000) - checked before each
+  fetch and charged per outbound request.
+- On exhaustion the app serves cached data instead of hammering the feed, and
+  the provenance panel keeps showing the true age of that data.
+- `budget_status()` reports spent/remaining for the running process.
+- Raise or lower the cap in that module: it is the single chokepoint every
+  outbound call already passes through, so a future paid feed's key belongs
+  behind the same counter.
+
+Other bounds: `ingestion.MAX_UNIVERSE` (25 symbols), `CACHE_MAX_FILES` /
+`CACHE_MAX_MB` (disk budget, oldest evicted first).
+
+Inbound compute is bounded inside the app, where Streamlit's cost actually
+lands:
+
+- The 10,000-path Monte Carlo is cached (`run_monte_carlo` in `main.py`,
+  64 entries). Both engines are seeded, so a cached result is identical to a
+  fresh one; uncached it re-ran (0.2-0.5s CPU) on every click, for everyone.
+- Visitors cannot clear shared state. There is no public Refresh button: it
+  called `st.cache_data.clear()`, which emptied every cache for every
+  visitor and deleted the disk cache the spend cap falls back on. Force a
+  fresh pull as the operator with `python -m tools.warm_cache --drill`.
+- The signal IC, the ES bootstrap and the Risk Topology payload are cached
+  too (all deterministic): a new visitor's page view went 5.1s -> 1.8s of CPU.
+- The freshness caption ticks once a minute, not once a second: at 1 Hz, 15
+  idle tabs held the process at 93% of a core; now 4%.
+- Railway dashboard: set a usage limit and alert on the project, so a bad day
+  costs a capped amount (outside the repo - do it once by hand).
+
+**Capacity (stress test 2026-10-15, sandbox 4 vCPU, synthetic data):** 10
+simultaneous first-time visitors see the headline within ~21s, 25 within ~53s,
+no errors, peak memory ~720 MB. Re-measure on Railway before quoting it as the
+live site's number. Report: `audit/stress_2026-10-15T020905Z.md`.
+
+### Reverse proxy / CDN (Cloudflare): decided against, 2026-10-15
+
+A five-adviser council (4-1, chair agreed) rejected putting Cloudflare in
+front of the app. On record so the question is not re-litigated from scratch:
+
+- **It cannot see the load this app is exposed to.** Every rerun is a
+  message inside one already-open WebSocket (`/_stcore/stream`); Cloudflare
+  rate-limits HTTP requests, so it counts one request per visitor however hard
+  they click. The in-app bounds above are the controls with a matching surface.
+- **It can be walked around.** Cloudflare cannot proxy
+  `*.up.railway.app`, and that URL stays public (every link already shared
+  points at it), so the origin remains directly reachable.
+- **It costs promises.** A new processor of visitor IPs for `PRIVACY.md`, and
+  Bot Fight Mode / challenges / Web Analytics / Rocket Loader inject
+  third-party JavaScript the privacy page says this app never loads.
+
+**Dissent kept on record:** a custom domain (~$10/yr) is worth having for its
+own sake - a resume link that survives a host move. If one is bought, point it
+at Railway with Cloudflare **DNS only (grey cloud)**: a cleaner link, no new
+processor, no `PRIVACY.md` change. **Revisit the proxy only if** the logs show
+many concurrent sessions stalling the process; even then the next control is a
+process-wide concurrency cap in the app, not a proxy.
+
+## 5. Phased release
+
+1. **Local** - `python -m streamlit run main.py`, then `python -m tests.test_engine`
+   (108 checks) and `python -m tests.batch_audit` (live-data audit).
+2. **Preview** - deploy the branch to a preview URL. Same build, unlisted.
+3. **Beta** - share that link with a handful of people. Watch
+   `logs/meleona.log` and the budget counter; keep the kill switch one variable
+   away.
+4. **Public** - promote to the production URL, unset `MELEONA_CHANNEL`, and
+   put it on the resume.
+
+Set `MELEONA_CHANNEL=beta` on the preview and beta deploys: it shows a beta
+notice with a one-click "report this session" link whose subject already
+carries the session reference. Unset on production. After any deploy or
+restore, run `python -m tools.warm_cache` so the first visitor is not paying
+for eleven cold fetches; `--drill` forces real fetches and prints the
+cold-refill time, which is this app's recovery-time objective.
+
+Roll back at any stage with section 2 - there is no staged store rollout to
+wait on.
+
+## 6. Reviewer / demo notes
+
+Nothing to log into: the URL *is* the demo, every visitor sees the same public
+market data, and no test account, promo code or sandbox key exists. A
+five-minute reviewer path:
+
+1. Land on the hero, click **The Grit Zone** - resilience ranked from real
+   drawdowns.
+2. Click **The Engine**, keep the default basket, read the headline CVaR
+   verdict and the fan chart under it.
+3. Switch the stress scenario to a real crisis window (e.g. COVID) and watch
+   the verdict change; excluded assets are named, not hidden.
+4. Open **Risk Topology** - the Monte Carlo drawn as a map, with the state
+   model and its measured widening factor disclosed in the footnote.
+5. Open **Lineage & Audit** for provenance, the run's audit trail, and the
+   privacy panel with the session-clear control.
+
+## 6b. Support mailbox setup (do this before the link is public)
+
+Support runs on `meleona.support@gmail.com`, forwarded to the personal inbox.
+Creating a Gmail account requires phone verification, so it is a manual step -
+five minutes, once:
+
+1. **Create it.** accounts.google.com -> create account -> "for my personal
+   use" -> username `meleona.support`. If that exact username is taken, pick
+   the next best (`meleona.risk.support`, `meleona.engine`) and set
+   `MELEONA_SUPPORT_EMAIL` on the host to the one you got - the footer,
+   maintenance page, feedback link and privacy panel all follow that variable.
+2. **Forward it to yourself.** In the new mailbox: Settings -> See all
+   settings -> Forwarding and POP/IMAP -> Add a forwarding address -> enter the
+   personal address -> Google emails a confirmation link to the personal inbox
+   -> click it -> back in the new mailbox select **Forward a copy of incoming
+   mail** and *keep Gmail's copy in the Inbox* (so nothing is lost if
+   forwarding is ever turned off).
+3. **Label it on arrival.** In the personal inbox: Settings -> Filters ->
+   Create filter -> To: `meleona.support@gmail.com` -> Apply label "Meleona
+   support". Support mail then lands sorted rather than mixed in.
+4. **Verify.** Send a test message to the project address from any other
+   account and confirm it arrives in the personal inbox under that label.
+   Do this before the public link goes out - a support address that bounces is
+   worse than none.
+
+If the address is ever retired, change `MELEONA_SUPPORT_EMAIL` on the host and
+keep forwarding for a month so nothing in flight is lost.
+
+## 6c. First deploy (Phase VI)
+
+The app is a single web process with no database, no build step and no
+secrets, so the whole deployment is: point a host at the repo, set two
+environment variables, and let it run `Procfile`.
+
+**Pinned for the host, not for this laptop:** `runtime.txt` (`python-3.13.7`)
+and `.python-version` (`3.13`) - Render reads the former, Railway's builder
+(Railpack) the latter. Local development stays on whatever Python is installed;
+the pin exists so a host never silently picks a version without wheels for
+numpy/scipy/pyarrow/curl_cffi.
+
+### Railway (the chosen host)
+
+The service's Railway configuration lives in **`.railway/railway.ts`**
+(Railway Infrastructure as Code). It replaced `railway.json` on 2026-09-14,
+because Config as Code stops being read on 2026-12-01. The file was generated
+from `railway config pull`, i.e. from what production actually runs: GitHub
+source on branch `main`, the Railpack builder, one replica in `sfo`, and the
+public domain on port 8080. The start command comes from `Procfile`.
+
+Two facts worth knowing before trusting old notes:
+
+- `railway.json` never took effect. Its NIXPACKS builder, `/_stcore/health`
+  health check and 3-retry restart policy were absent from every deployment
+  manifest - the live service builds with Railpack, has **no health check**,
+  and restarts on failure up to 10 times. Enabling the health check is a
+  deliberate change to make in `.railway/railway.ts`, not a restoration.
+- `.railway/railway.ts` is **not read on push**. It only acts through
+  `railway config plan` (read-only) and `railway config apply`.
+
+To check the file still matches production (should print "already up to
+date"). Do not `npm install railway` in the repo root: a root `package.json`
+can make Railpack build this as a Node app. Install the SDK somewhere else:
+
+    # once, outside the repo
+    mkdir iac && cd iac && npm init -y && npm pkg set type=module && npm install railway
+    cp <repo>/.railway/railway.ts .
+
+    # from the repo root (linked with `railway link`). Use CLI >= 5.42.1 and make
+    # the real railway.exe resolvable: the SDK checks the version by running
+    # `$_ --version`, and under Git Bash `$_` points at npx, not Railway -
+    # which fails with a misleading "requires Railway CLI 5.42.1" error.
+    _=/path/to/railway.exe railway.exe config plan --file <iac>/railway.ts
+
+For a first deploy from scratch, the dashboard needs almost nothing:
+
+1. railway.app -> New Project -> Deploy from GitHub repo -> pick
+   `Summer-2026-Quant-Project-Risk-Engine-Blueprint`.
+2. Variables -> add `MELEONA_CHANNEL=beta` and
+   `STREAMLIT_SERVER_FILE_WATCHER_TYPE=none` (nothing edits source on the host,
+   so the watcher is pure overhead and could restart the script under a
+   visitor). Add `MELEONA_SUPPORT_EMAIL` only if the mailbox username differs
+   from `meleona.support@gmail.com`. Leave `MELEONA_MAINTENANCE` unset (it is
+   the kill switch, section 1). The watcher setting is an env var rather than a
+   line in `.streamlit/config.toml` on purpose: that file is shared with local
+   development, where hot reload is wanted.
+3. Settings -> Networking -> Generate Domain. That URL is the beta link.
+4. Deploy. Railway injects `$PORT`; the start command binds it on `0.0.0.0`.
+   The first build installs from `requirements.txt` on Python 3.13
+   (`.python-version`) and takes a few minutes; later deploys are faster.
+5. Watch the deploy log for `You can now view your Streamlit app`, then open
+   `<url>/_stcore/health` and confirm it answers `ok` before sharing the URL.
+   Railway runs no health check of its own on this service (see above), so
+   this manual check is the only one.
+
+### Render
+
+1. render.com -> New -> Web Service -> connect the repo.
+2. Runtime **Python 3**, Build `pip install -r requirements.txt`, Start
+   `streamlit run main.py --server.port=$PORT --server.address=0.0.0.0`.
+3. Environment -> `MELEONA_CHANNEL=beta` (plus `MELEONA_SUPPORT_EMAIL` if
+   needed). Health check path: `/_stcore/health`.
+4. Free instances sleep when idle; the first hit after a sleep is slow and
+   cold-fetches data. Warm it (below) before sharing the link with anyone.
+
+### After every deploy
+
+**Live audit (real data, no laptop needed):** GitHub -> Actions -> *Live audit*
+-> Run workflow. On a GitHub runner, against the real Yahoo feed, it proves
+every engine price equals Yahoo's raw API, cross-checks the T-bill rate with
+the US Treasury, confirms every preset ticker still trades, runs the test
+suite, the batch audit and the visitor walkthrough, then loads the deployed
+site in a browser. Any push to a `claude/**` branch runs it too. Last green
+run: `audit/live_audit_2026-10-15T025826Z.md`.
+
+**On `main`, the Live audit also proves the host is serving that commit.**
+`tools/public_files.py` stamps the build (Railway's `RAILWAY_GIT_COMMIT_SHA`)
+into the page as `<meta name="meleona-build">`, and step 5 fails when it is
+not the commit under test. Railway posts nothing back to GitHub, so this is
+the only proof a deploy happened. If the step reads `unknown`, the service is
+not deploying from GitHub: see *Rolling back a bad deploy* below for the App
+and the Source setting it needs.
+
+**Keeping the cache warm (scheduled, nothing to set up).** The Procfile starts
+`python -m tools.warm_cache --every 5` in the background beside Streamlit.
+Every 5 hours it refetches every preset before the 6-hour cache expires, so no
+visitor pays for a cold Yahoo fetch on Railway (live audit run 24: 101.6s for
+the first Semiconductors pick after the cache expired, against 12.1s on a
+GitHub runner). It has to run inside the web service. A Railway cron service
+is a separate container with its own disk, so it would warm a cache the web
+app never reads. Its passes print to the deploy log, one line per preset.
+
+A pass warms every pull the page makes for a preset, not only its 2y prices:
+the full histories behind The Book and the Grit tab, the 10 years behind the
+tail fit, the anchor pool, and the page-wide pulls
+(benchmark, recovery race, factor proxies, defensive shelf, T-bill). After a
+deploy the first switch to Semiconductors took 93.1s with only the 2y pull
+warm (John, 2026-10-20); offline, warming everything took that switch from
+40.9s to 12.8s, the headline from 4.1s to 1.0s.
+`test_the_warm_pass_covers_every_fetch_a_preset_page_makes` records the real
+page's fetches and fails if a pass misses one - the Balance tab's default
+crisis pair included, picked by the page's own rule (most volatile name, top
+of `anchor_rank`). Each name's download is kept on its own per period
+(`ingestion._raw_path`), so presets that share names share the work and a
+basket a visitor types downloads only the names the server does not hold yet
+- the rest of it is stitched from what the pass left. A pass makes about 450
+name-downloads (152 names at 2y, 149 at max, 148 at 10y) plus the security
+master's lookups when they are due, down from about 820 requests when each
+basket was downloaded whole; the warmer is its own process with its own
+5000-a-day netguard cap, and it pauses 1s between pulls. The cache holds up to
+`CACHE_MAX_FILES` = 1500 files (a pass writes ~720; at the old 240 a pass
+evicted its own first presets).
+
+To warm by hand (after a restore, or to time a cold refill):
+
+    python -m tools.warm_cache          # from the service's shell
+    python -m tools.warm_cache --drill  # force real fetches, print the recovery time
+
+Then walk the page once: hero -> The Engine -> a crisis scenario -> Risk
+Topology -> Lineage & Audit, and confirm the footer shows the support address
+and a session reference. Trigger one deliberate error and confirm that
+reference finds it in `logs/meleona.log` (section 3).
+
+### Rolling back a bad deploy
+
+Kill switch first (section 1) if visitors are seeing something broken, then
+revert and push (section 2). Railway redeploys on every push to `main` - but
+only since 2026-09-14, and only while two things stay in place:
+
+- the **Railway GitHub App** is installed on `ricepillow3000` with access to
+  this repository (github.com/settings/installations -> Railway App ->
+  Configure). Until then the service built from the public repo when told to,
+  yet no push ever deployed: a public repo clones without the App, a push
+  trigger does not.
+- a **deployment trigger** exists for the service (GitHub, branch `main`,
+  check suites off). It had been missing entirely. Check it with:
+
+      railway api 'query($p:String!,$e:String!,$s:String!){ deploymentTriggers(projectId:$p, environmentId:$e, serviceId:$s){ edges{ node{ id branch checkSuites } } } }' \
+        --raw-var p=<projectId> --raw-var e=<environmentId> --raw-var s=<serviceId>
+
+After pushing a revert, confirm it actually went out rather than assuming:
+
+    railway deployment list --json         # meta.commitHash names what is live
+
+If no deployment appears for the pushed commit, ship it by hand:
+`railway redeploy --from-source -y`. Plain `railway redeploy` (without
+`--from-source`) rebuilds the deployment that is already live - it will NOT
+pick up the revert. Render redeploys on push.
+
+## 7. Email deliverability (only once a custom domain exists)
+
+Support runs on a Gmail address today and the app **sends no email at all**, so
+SPF, DKIM and DMARC do not apply - there is no sending domain to authenticate.
+They matter the moment mail is sent from a domain you own
+(`support@yourdomain`). At that point, at the DNS provider:
+
+    ; SPF - authorise only the provider you actually send through
+    yourdomain.                    TXT  "v=spf1 include:_spf.google.com -all"
+
+    ; DKIM - publish the key your mail provider generates for you
+    google._domainkey.yourdomain.  TXT  "v=DKIM1; k=rsa; p=<public-key-from-provider>"
+
+    ; DMARC - monitor first, then tighten
+    _dmarc.yourdomain.             TXT  "v=DMARC1; p=none; rua=mailto:dmarc@yourdomain; adkim=s; aspf=s"
+
+Order that works: publish SPF and DKIM, run DMARC at `p=none` for a week or two
+and read the aggregate reports, then move to `p=quarantine` and finally
+`p=reject`. Going straight to `reject` before the reports are clean is how
+legitimate mail gets silently dropped.
+
+## 8. Repository and credential hygiene
+
+The repo is **public** on a free personal GitHub account with one owner. What
+follows is the whole policy; anything not listed here was considered and
+deliberately left out.
+
+**Access.** Add no collaborators. A repo owned by a personal account has no
+read-only collaborator role - adding someone grants *write*. Recruiters and
+reviewers already have exactly the read access they need, because the repo is
+public and needs no invitation. If a real code collaborator ever appears, that
+is the moment to add branch protection, not before: required review with one
+human means self-approval or a rule switched off at midnight.
+
+**Tokens.** Authenticate with `gh auth login`, which stores an OAuth token in
+the Windows credential keyring. Never create a *classic* personal access token
+- classic tokens are all-or-nothing across every repo on the account, including
+the private ones. If a token is genuinely needed (CI, a deploy hook), use a
+**fine-grained** PAT scoped to this one repository, with the minimum
+permissions and an expiry date. A token never goes in a file inside the repo,
+in a commit, in a screenshot or in a chat window; it goes in the host's
+environment-variable settings (Railway) or the OS keyring. If one is ever
+exposed: revoke first, rotate second, in that order.
+
+**Secrets.** There are none in this project - config arrives as environment
+variables from the host (section 0). `.gitignore` blocks `.env`, `.env.*`,
+`secrets.toml`, `.streamlit/secrets.toml`, `*.pem`, `*.key`, `*.pfx` and
+`credentials.json` so that stays true by default rather than by memory.
+
+**Server-side scanning.** GitHub secret scanning, push protection and
+Dependabot security *alerts* are enabled (default-on for public repos) and
+cover every machine that pushes, including any future one. Two sub-features -
+`secret_scanning_non_provider_patterns` and `secret_scanning_validity_checks` -
+are GitHub Advanced Security and stay off on the free tier; a PATCH to enable
+them is accepted and silently ignored. The practical gap: default scanning
+matches known vendor token shapes (`ghp_`, `sk-`, AWS keys) and would not flag
+a home-made credential pasted into a tracked `.py`. Dependabot *version-update*
+PRs are deliberately not enabled - there is no CI here, and merging unverified
+dependency bumps into a live deploy is worse than stale pins.
+
+**Two-factor auth.** Required on the GitHub account, TOTP or passkey rather
+than SMS, with the recovery codes stored off this machine.
+
+**Working copies.** Keep exactly one clone, at
+`C:\Users\john4\Claude\Projects\risk-engine`. Never keep a clone inside a
+OneDrive-synced folder: a `.env` written there uploads to Microsoft's cloud
+before git is ever involved, which no `.gitignore` or scanner can see, and
+syncing a live `.git` directory risks index corruption.
