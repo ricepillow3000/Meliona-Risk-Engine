@@ -5,6 +5,8 @@ description: John's five UI sources for Meliona (Motion Primitives, Watermelon U
 
 # UI sources for Meliona
 
+Read `docs/design/DESIGN-RULES.md` first: it holds every design rule John has given, and this skill is one step of its "Before any design work" list.
+
 John named five component sites to raise the page's design (2026-11-17). Meliona is a
 Streamlit app, so none of them can be installed as-is: they are React/Tailwind or a JS
 library. Take the idea, then rebuild it in the page's own terms: a few lines in

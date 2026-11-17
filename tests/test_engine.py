@@ -7634,6 +7634,39 @@ def test_the_faq_is_five_questions_a_reader_opens():
         assert re.match(r'<summary><h3 class="faq-q">', row), row[:60]
 
 
+def test_design_work_starts_from_the_rulebook_and_the_five_sources():
+    """John, 2026-11-17: every design rule from every session in one file, and
+    "every design session from here on out will have to go for these skills
+    first before anything gets designed", using the five sites he named. The
+    rulebook exists and covers each part of the page, CLAUDE.md sends design
+    work to it and to the ui-sources skill before anything else, and the
+    skill sends readers back to the rulebook."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    book = (root / "docs" / "design" / "DESIGN-RULES.md").read_text(encoding="utf-8")
+    for part in ("## Before any design work", "## John's five UI sources", "## Look and palette",
+                 "## Type", "## Layout and spacing", "## Motion and scrolling", "## Words and tone",
+                 "## Accessibility", "## Phones and tablets", "## Charts and the Risk Topology map",
+                 "## Drawers, tabs and other controls", "## Hero, About, story, FAQ, contact and footer",
+                 "## Images, crest, banners and link preview", "## Loading and app feel",
+                 "## Process rules for design work", "## Turned down by John", "## History"):
+        assert part in book, f"the rulebook has no section {part!r}"
+    for source in ("Motion Primitives", "Watermelon UI", "Kokonut UI", "Bklit UI", "Anime.js"):
+        assert source in book, f"the rulebook does not name {source}"
+    claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    first = claude[:claude.index("## What this is")]
+    assert "docs/design/DESIGN-RULES.md" in first and "ui-sources" in first, \
+        "CLAUDE.md does not send design work to the rulebook and the five sources first"
+    # every test the rulebook names as an enforcer is a real test
+    import re
+    tests = "".join(f.read_text(encoding="utf-8") for f in (root / "tests").glob("*.py"))
+    named = set(re.findall(r"`(test_[a-z0-9_]+)`", book))
+    assert named and not {t for t in named if f"def {t}(" not in tests}, \
+        f"the rulebook names tests that do not exist: {sorted(t for t in named if f'def {t}(' not in tests)}"
+    assert "john4000" not in book, "John's own address belongs only in the contact UI and PRIVACY.md"
+    skill = (root / ".claude" / "skills" / "ui-sources" / "SKILL.md").read_text(encoding="utf-8")
+    assert "docs/design/DESIGN-RULES.md" in skill, "the ui-sources skill does not point to the rulebook"
+
+
 def test_a_waiting_press_yields_only_to_the_readers_own_hand():
     """Live audit 8c early, PR #51 (2026-11-06, intermittent): "Skip to the
     analysis", pressed 200 ms after it appeared, waited for #analysis, then
