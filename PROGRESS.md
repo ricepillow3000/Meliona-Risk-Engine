@@ -49,6 +49,17 @@ Paste this into a new chat session to bring it up to speed instantly.
   Nothing from the audit is left open (SECURITY-LESSONS.md, 2026-11-13).
   One timing check (a 217 ms frame in one button's glide, limit 200 ms)
   failed once on the CI runner after #72 and passed on re-run.
+- **2026-11-14, Dependabot stays on the site's Python (PR #77, live at
+  d9c95e1, Live audit green):** minutes after #74 let Dependabot watch
+  `docker/`, it proposed python 3.13-slim -> 3.15-slim (#75), which would
+  have moved the image off the site's Python (`runtime.txt` 3.13). Its
+  docker entry now ignores minor and major `python` updates: it may still
+  propose new builds of 3.13 (security patches, by digest), and a version
+  change moves `runtime.txt` and the image together, on purpose. Pinned by
+  `test_the_image_is_pinned_and_only_main_may_publish_it` (M54). Dependabot
+  closed #75 itself. The first Live audit after #77 failed only step 5:
+  the front end's #73 merged 76 s later, so Railway already served the
+  newer commit; the run on d9c95e1 passed.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
   day, now one request per made-up name (2026-11-13); presets and cached
