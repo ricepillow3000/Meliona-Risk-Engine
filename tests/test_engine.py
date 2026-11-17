@@ -7570,6 +7570,70 @@ def test_the_page_is_confident_and_says_it_can_be_wrong():
         "say mistakes get fixed and learned from"
 
 
+def test_the_cone_says_its_own_numbers_and_ends_on_the_last_day():
+    """John, 2026-11-17 (Bklit UI's end labels and reference mark): the cone
+    printed no number, and the link to the big number sat in a closed drawer.
+    Its right edge now carries the day-252 best 5, median and worst 5, and the
+    headline CVaR on the same scale - each the engine's own figure - while the
+    audits' trace order stays and the axis still ends on the last day."""
+    import ast
+    import plotly.graph_objects as go
+    tree = ast.parse((pathlib.Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8"))
+    keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ("fan_chart", "_style_fig"))
+            or (isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                and all(isinstance(t, ast.Name) and t.id.isupper() for t in n.targets))]
+    ns = {"np": np, "go": go}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), "main.py", "exec"), ns)  # nosec B102
+    days = np.arange(0, 253)
+    bands = {"days": days, **{k: v * days / 252 for k, v in
+                              (("p5", -0.162), ("p25", 0.02), ("p50", 0.167), ("p75", 0.33), ("p95", 0.627))}}
+    fig = ns["fan_chart"](bands, 0.226)
+    assert [t.name for t in fig.data[:4]] == ["p95", "p5", "p75", "p25"], "the audits' trace order moved"
+    labels = [a.text for a in fig.layout.annotations]
+    assert labels[:3] == ["62.7%", "16.7%", "-16.2%"], labels
+    assert labels[3] == "<b>Bad-year loss 22.6%</b>", labels
+    assert [sh.y0 for sh in fig.layout.shapes if sh.type == "line" and sh.y0 == sh.y1][-1] == -22.6
+    assert tuple(fig.layout.xaxis.range) == (0, 252), "the axis runs past the simulated year"
+    assert not ns["fan_chart"](bands, -0.01).layout.shapes[1:], "a gain is drawn as a bad-year loss"
+
+
+def test_the_books_figure_column_repeats_only_its_sentence():
+    """John, 2026-11-17 (a card's stat column, after Kokonut UI): each lead and
+    anchor shows its ticker, share, grit and partner beside its sentence. The
+    share is the sentence's own figure, the bar is drawn to the largest share,
+    and the drawer's other rows get no column."""
+    import re
+    at, restore = _offline_app()
+    try:
+        rows = [m.value for m in at.markdown if 'class="book-row' in m.value]
+    finally:
+        restore()
+    figs = [r for r in rows if 'class="book-figs"' in r]
+    assert figs, "no figure column on the page"
+    for r in rows:
+        assert ('class="book-figs"' in r) == ("is-flyer" in r or "is-cushion" in r), r[:90]
+    for r in figs:
+        sentence = re.search(r'class="book-text">(.*?)</div>', r, re.S).group(1)
+        share = re.search(r"<span>(\d+\.\d%) of the book</span>", r).group(1)
+        assert f"{share} of the book" in sentence, (share, sentence[:80])
+        bar = int(re.search(r'book-bar" style="width:(\d+)%', r).group(1))
+        assert 0 <= bar <= 100
+    assert any('width:100%' in r for r in figs), "no row is drawn as the largest share"
+
+
+def test_the_faq_is_five_questions_a_reader_opens():
+    """John, 2026-11-17 (Watermelon UI's FAQ blocks): five long answers stood
+    open in an uneven grid. Each is now a question row a reader opens, native
+    <details> (no script), all closed at first, every answer still in the page."""
+    import re
+    import hero
+    shown = hero.faq_html()
+    rows = re.findall(r'<details class="faq-row">(.*?)</details>', shown, re.S)
+    assert len(rows) == len(hero.FAQS) == 5 and "<details open" not in shown
+    for row, (q, _a) in zip(rows, hero.FAQS):
+        assert re.match(r'<summary><h3 class="faq-q">', row), row[:60]
+
+
 def test_a_waiting_press_yields_only_to_the_readers_own_hand():
     """Live audit 8c early, PR #51 (2026-11-06, intermittent): "Skip to the
     analysis", pressed 200 ms after it appeared, waited for #analysis, then
