@@ -307,9 +307,12 @@ FAQS = (
 
 
 def faq_html() -> str:
-    """The five questions as ruled rows: question in bold serif, answer under it."""
-    rows = "".join(f'<div class="faq-row"><h3 class="faq-q">{_html.escape(q)}</h3>'
-                   f'<p class="faq-a">{_html.escape(a)}</p></div>' for q, a in FAQS)
+    """The five questions as ruled rows a reader opens one at a time (Watermelon
+    UI's FAQ blocks, John 2026-11-17): the question in bold serif, the answer
+    under it. Native <details>, so it works without script and every answer
+    stays in the page for readers and search engines."""
+    rows = "".join(f'<details class="faq-row"><summary><h3 class="faq-q">{_html.escape(q)}</h3>'
+                   f'</summary><p class="faq-a">{_html.escape(a)}</p></details>' for q, a in FAQS)
     return ('<div class="faq-section" id="faq"><div class="kicker">Questions, answered</div>'
             '<h2 class="showcase-title">What people ask before trusting a number</h2><div class="ar-rule"></div>'
             f'<div class="faq-list">{rows}</div></div>')

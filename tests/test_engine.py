@@ -7570,6 +7570,190 @@ def test_the_page_is_confident_and_says_it_can_be_wrong():
         "say mistakes get fixed and learned from"
 
 
+def test_the_cone_says_its_own_numbers_and_ends_on_the_last_day():
+    """John, 2026-11-17 (Bklit UI's end labels and reference mark): the cone
+    printed no number, and the link to the big number sat in a closed drawer.
+    Its right edge now carries the day-252 best 5, median and worst 5, and the
+    headline CVaR on the same scale - each the engine's own figure - while the
+    audits' trace order stays and the axis still ends on the last day."""
+    import ast
+    import plotly.graph_objects as go
+    tree = ast.parse((pathlib.Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8"))
+    keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ("fan_chart", "_style_fig"))
+            or (isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                and all(isinstance(t, ast.Name) and t.id.isupper() for t in n.targets))]
+    ns = {"np": np, "go": go}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), "main.py", "exec"), ns)  # nosec B102
+    days = np.arange(0, 253)
+    bands = {"days": days, **{k: v * days / 252 for k, v in
+                              (("p5", -0.162), ("p25", 0.02), ("p50", 0.167), ("p75", 0.33), ("p95", 0.627))}}
+    fig = ns["fan_chart"](bands, 0.226)
+    assert [t.name for t in fig.data[:4]] == ["p95", "p5", "p75", "p25"], "the audits' trace order moved"
+    labels = [a.text for a in fig.layout.annotations]
+    assert labels[:3] == ["62.7%", "16.7%", "-16.2%"], labels
+    assert labels[3] == "<b>Bad-year loss 22.6%</b>", labels
+    assert [sh.y0 for sh in fig.layout.shapes if sh.type == "line" and sh.y0 == sh.y1][-1] == -22.6
+    assert tuple(fig.layout.xaxis.range) == (0, 252), "the axis runs past the simulated year"
+    assert not ns["fan_chart"](bands, -0.01).layout.shapes[1:], "a gain is drawn as a bad-year loss"
+
+
+def test_the_books_figure_column_repeats_only_its_sentence():
+    """John, 2026-11-17 (a card's stat column, after Kokonut UI): each lead and
+    anchor shows its ticker, share, grit and partner beside its sentence. The
+    share is the sentence's own figure, the bar is drawn to the largest share,
+    and the drawer's other rows get no column."""
+    import re
+    at, restore = _offline_app()
+    try:
+        rows = [m.value for m in at.markdown if 'class="book-row' in m.value]
+    finally:
+        restore()
+    figs = [r for r in rows if 'class="book-figs"' in r]
+    assert figs, "no figure column on the page"
+    for r in rows:
+        assert ('class="book-figs"' in r) == ("is-flyer" in r or "is-cushion" in r), r[:90]
+    for r in figs:
+        sentence = re.search(r'class="book-text">(.*?)</div>', r, re.S).group(1)
+        share = re.search(r"<span>(\d+\.\d%) of the book</span>", r).group(1)
+        assert f"{share} of the book" in sentence, (share, sentence[:80])
+        bar = int(re.search(r'book-bar" style="width:(\d+)%', r).group(1))
+        assert 0 <= bar <= 100
+    assert any('width:100%' in r for r in figs), "no row is drawn as the largest share"
+
+
+def test_the_faq_is_five_questions_a_reader_opens():
+    """John, 2026-11-17 (Watermelon UI's FAQ blocks): five long answers stood
+    open in an uneven grid. Each is now a question row a reader opens, native
+    <details> (no script), all closed at first, every answer still in the page."""
+    import re
+    import hero
+    shown = hero.faq_html()
+    rows = re.findall(r'<details class="faq-row">(.*?)</details>', shown, re.S)
+    assert len(rows) == len(hero.FAQS) == 5 and "<details open" not in shown
+    for row, (q, _a) in zip(rows, hero.FAQS):
+        assert re.match(r'<summary><h3 class="faq-q">', row), row[:60]
+
+
+def test_design_work_starts_from_the_rulebook_and_the_five_sources():
+    """John, 2026-11-17: every design rule from every session in one file, and
+    "every design session from here on out will have to go for these skills
+    first before anything gets designed", using the five sites he named. The
+    rulebook exists and covers each part of the page, CLAUDE.md sends design
+    work to it and to the ui-sources skill before anything else, and the
+    skill sends readers back to the rulebook."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    book = (root / "docs" / "design" / "DESIGN-RULES.md").read_text(encoding="utf-8")
+    for part in ("## Before any design work", "## John's five UI sources", "## Look and palette",
+                 "## Type", "## Layout and spacing", "## Motion and scrolling", "## Words and tone",
+                 "## Accessibility", "## Phones and tablets", "## Charts and the Risk Topology map",
+                 "## Drawers, tabs and other controls", "## Hero, About, story, FAQ, contact and footer",
+                 "## Images, crest, banners and link preview", "## Loading and app feel",
+                 "## Process rules for design work", "## Turned down by John", "## History"):
+        assert part in book, f"the rulebook has no section {part!r}"
+    for source in ("Motion Primitives", "Watermelon UI", "Kokonut UI", "Bklit UI", "Anime.js"):
+        assert source in book, f"the rulebook does not name {source}"
+    claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    first = claude[:claude.index("## What this is")]
+    assert "docs/design/DESIGN-RULES.md" in first and "ui-sources" in first, \
+        "CLAUDE.md does not send design work to the rulebook and the five sources first"
+    # every test the rulebook names as an enforcer is a real test
+    import re
+    tests = "".join(f.read_text(encoding="utf-8") for f in (root / "tests").glob("*.py"))
+    named = set(re.findall(r"`(test_[a-z0-9_]+)`", book))
+    assert named and not {t for t in named if f"def {t}(" not in tests}, \
+        f"the rulebook names tests that do not exist: {sorted(t for t in named if f'def {t}(' not in tests)}"
+    assert "john4000" not in book, "John's own address belongs only in the contact UI and PRIVACY.md"
+    skill = (root / ".claude" / "skills" / "ui-sources" / "SKILL.md").read_text(encoding="utf-8")
+    assert "docs/design/DESIGN-RULES.md" in skill, "the ui-sources skill does not point to the rulebook"
+
+
+def test_the_web_interface_guidelines_review_holds():
+    """John, 2026-11-17: run Vercel's web-design-guidelines over the page. It
+    found three things the house rules also forbid: the 404, offline and
+    thank-you pages switched the focus outline off (a colour change alone), the
+    new FAQ rows wore an ink ring instead of the house's text-bronze one, and
+    the contact form's name field gave the browser no autofill hint."""
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for page in ("404.html", "offline.html", "thanks.html"):
+        css = (root / "public" / page).read_text(encoding="utf-8")
+        assert not re.search(r"focus-visible[^{]*\{[^}]*outline:\s*none", css), f"{page} hides the focus ring"
+        assert re.search(r":focus-visible\s*\{\s*outline:\s*2px solid #(6A5030|C6A26B); outline-offset: 3px", css), \
+            f"{page} has no house focus ring"
+    app = (root / "static" / "app.css").read_text(encoding="utf-8")
+    assert ".faq-row > summary:focus-visible { outline: 2px solid #6A5030; outline-offset: 3px; }" in app
+    main = (root / "main.py").read_text(encoding="utf-8")
+    name = main[main.index('st.text_input("Your name (optional)"'):][:200]
+    assert 'autocomplete="name"' in name, "the name field gives the browser no autofill hint"
+
+
+def test_streamlits_static_bundle_goes_out_gzipped_and_compressed_once():
+    """John, 2026-11-17 (the chrome-devtools speed check): a phone on 4G waited
+    6.9 s for the headline, most of it 9.8 MB of Streamlit's JavaScript sent
+    raw. Streamlit skips gzip on /static/ because Python would recompress on
+    every hit; these files are content-hashed and immutable, so serve.py
+    compresses each one once, keeps it, and sends it to any client that
+    accepts gzip (21 MB of text becomes about 6 MB). Nothing else changes:
+    other paths, errors, fonts, and clients without gzip get the raw bytes."""
+    import asyncio
+    import gzip
+    import serve
+    assert any(m.cls is serve.StaticGzip for m in serve.app._user_middleware), "serve.py does not compress"
+    body = b"function x(){return 1}" * 400
+    calls = []
+
+    def inner(status, ctype, payload):
+        async def app(scope, receive, send):
+            calls.append(scope["path"])
+            await send({"type": "http.response.start", "status": status,
+                        "headers": [(b"content-type", ctype), (b"content-length", str(len(payload)).encode())]})
+            await send({"type": "http.response.body", "body": payload[:100], "more_body": True})
+            await send({"type": "http.response.body", "body": payload[100:]})
+        return app
+
+    def run(app, path, enc=b"gzip, br", method="GET"):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(m):
+            sent.append(m)
+        scope = {"type": "http", "method": method, "path": path, "headers": [(b"accept-encoding", enc)]}
+        asyncio.run(app(scope, receive, send))
+        head = dict(sent[0]["headers"])
+        return sent[0]["status"], head, b"".join(m.get("body", b"") for m in sent[1:])
+
+    mw = serve.StaticGzip(inner(200, b"text/javascript", body))
+    status, head, out = run(mw, "/static/js/index.abc123.js")
+    assert status == 200 and head[b"content-encoding"] == b"gzip" and b"accept-encoding" in head[b"vary"].lower()
+    assert gzip.decompress(out) == body and int(head[b"content-length"]) == len(out) < len(body) / 3
+    again = run(mw, "/static/js/index.abc123.js")
+    assert again[2] == out and "/static/js/index.abc123.js" in mw.cache, "the second visitor does not reuse the first gzip"
+    assert run(mw, "/static/js/index.abc123.js", enc=b"identity")[2] == body, "a client without gzip got gzip"
+    assert run(mw, "/static/js/index.abc123.js", method="HEAD")[1].get(b"content-encoding") is None
+    for path, status_, ctype in (("/app/static/app.css", 200, b"text/css"), ("/static/js/missing.js", 404, b"text/plain"),
+                                 ("/static/media/font.woff2", 200, b"font/woff2"), ("/", 200, b"text/html")):
+        _s, h, o = run(serve.StaticGzip(inner(status_, ctype, body)), path)
+        assert h.get(b"content-encoding") is None and o == body, f"{path} was changed"
+
+
+def test_the_deep_scan_reads_book_cards_by_their_class_not_their_shape():
+    """Live audit 10 on c5e5130 (2026-11-17): the Book's lead and anchor rows
+    gained a figure column, a third cell, and deep_scan's card reader - "a div
+    with exactly two children" - stopped seeing them: "cards: 0 lead, 0 anchor"
+    against a headline of 12 names. Cards are read as .book-row with a
+    .book-role first cell, so a new cell in a row never hides it again."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    scan = (root / "tools" / "deep_scan.mjs").read_text(encoding="utf-8")
+    reader = scan[scan.index("async function bookState()"):scan.index("await step('the book'")]
+    assert "children.length === 2" not in reader, "the card reader counts a row's cells again"
+    assert ".book-row" in reader and "classList.contains('book-role')" in reader
+    main = (root / "main.py").read_text(encoding="utf-8")
+    assert '<div class="book-row {_ROW[_d.role]}"><div class="book-role">' in main, \
+        "the page's card markup moved; update deep_scan's reader with it"
+
+
 def test_a_waiting_press_yields_only_to_the_readers_own_hand():
     """Live audit 8c early, PR #51 (2026-11-06, intermittent): "Skip to the
     analysis", pressed 200 ms after it appeared, waited for #analysis, then
