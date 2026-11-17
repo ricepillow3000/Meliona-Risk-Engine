@@ -37,6 +37,7 @@ logged too. Pinned by test_one_address_cannot_flood_the_shared_process.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import ipaddress
 import logging
@@ -90,6 +91,64 @@ class SecurityHeaders:
 
         await self.app(scope, receive, with_headers)
 
+
+
+# Streamlit sends its /static/ bundle raw: compressing in Python would cost CPU
+# on every hit. The files are content-hashed and immutable, so each one is
+# gzipped once and kept; 21 MB of text goes out as about 6 MB (speed check,
+# John 2026-11-17: a phone on 4G waited 6.9 s for the headline).
+GZIP_TYPES = (b"text/", b"application/javascript", b"application/json", b"image/svg+xml")
+GZIP_CACHE_MAX = 1024        # entries; streamlit's bundle is ~320 files
+
+
+class StaticGzip:
+    """Gzips a GET /static/ file once per path for a client that accepts gzip."""
+
+    def __init__(self, app):
+        self.app = app
+        self.cache = {}
+
+    async def __call__(self, scope, receive, send):
+        accepts = b"gzip" in dict(scope.get("headers", [])).get(b"accept-encoding", b"")
+        if (scope["type"] != "http" or scope.get("method") != "GET" or not accepts
+                or not scope["path"].startswith("/static/")):
+            await self.app(scope, receive, send)
+            return
+        start, chunks = None, []
+
+        async def hold(message):
+            nonlocal start
+            if message["type"] == "http.response.start":
+                start = message
+            elif message["type"] == "http.response.body":
+                chunks.append(message.get("body", b""))
+                if not message.get("more_body"):
+                    await self._finish(scope["path"], start, b"".join(chunks), send)
+            else:                                   # anything else passes through untouched
+                if start is not None:
+                    await send(start)
+                    start = None
+                await send(message)
+
+        await self.app(scope, receive, hold)
+
+    async def _finish(self, path, start, body, send):
+        head = {k.lower(): v for k, v in start.get("headers", [])}
+        if (start["status"] != 200 or b"content-encoding" in head or len(body) < 1024
+                or not head.get(b"content-type", b"").startswith(GZIP_TYPES)):
+            await send(start)
+            await send({"type": "http.response.body", "body": body})
+            return
+        packed = self.cache.get(path)
+        if packed is None:
+            packed = gzip.compress(body, 6)
+            if len(self.cache) < GZIP_CACHE_MAX:
+                self.cache[path] = packed
+        headers = [(k, v) for k, v in start.get("headers", []) if k.lower() not in (b"content-length", b"vary")]
+        headers += [(b"content-encoding", b"gzip"), (b"content-length", str(len(packed)).encode()),
+                    (b"vary", b"Accept-Encoding")]
+        await send({**start, "headers": headers})
+        await send({"type": "http.response.body", "body": packed})
 
 # Per address. A page load is one session and about forty requests, so a
 # person - or a whole office behind one address - stays far below these.
@@ -238,4 +297,4 @@ class RateLimit:
 
 
 app = App(Path(__file__).with_name("main.py"),
-          middleware=[Middleware(SecurityHeaders), Middleware(RateLimit)])
+          middleware=[Middleware(SecurityHeaders), Middleware(RateLimit), Middleware(StaticGzip)])

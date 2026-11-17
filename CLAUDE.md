@@ -17,6 +17,10 @@ John's vault at `C:\Users\john4\Claude\Vault` is the cross-session memory for th
 
 Secure by default on top of all four: every input is hostile until proven harmless (`docs/security/SECURITY-LESSONS.md`), and no number is invented (constraint 1 below).
 
+## Design work starts here (John, 2026-11-17)
+
+Before any design change (the page, the map, the banners, the words a visitor reads), read `docs/design/DESIGN-RULES.md` in full: every design rule from every session, its enforcing test and what John turned down. Then load the `ui-sources` skill and look at John's five UI sources (Motion Primitives, Watermelon UI, Kokonut UI, Bklit UI, Anime.js) before designing anything. Rebuild what you take in the house's own terms, keep every number the engine's, prove the change with a test that fails first plus before/after screenshots, and add any new rule to the rulebook in the same pull request (`test_design_work_starts_from_the_rulebook_and_the_five_sources`).
+
 ## What this is
 
 **Meliona** is an institutional-grade **Portfolio Optimization & Risk Engine** with a live Streamlit dashboard, built to recruiter-facing / hedge-fund-interview standards (Computer Information Systems student, specializing in AI & Analytics: portfolio project, targeting a public live link on a resume, ship target Aug 23, 2026).

@@ -257,6 +257,12 @@
     void el.offsetWidth;                               // starts from its waiting state
     el.style.setProperty('--reveal-delay', delay + 'ms');
     el.classList.add('is-visible');
+    // a chart's lines draw once as it arrives (Anime.js's drawable, by hand):
+    // pathLength 1 makes one dash the whole line (app.css "line-draw")
+    [].forEach.call(el.querySelectorAll('.scatterlayer path.js-line'), function (p) {
+      p.setAttribute('pathLength', '1');
+      p.classList.add('line-draw');
+    });
     var end = function (ev) {
       if (ev && (ev.target !== el || ev.pseudoElement)) return;   // a heading's rule ends on its own clock
       if (ev && ev.type === 'transitionend' && ev.propertyName !== 'transform') return;
@@ -351,6 +357,30 @@
   }
   D.addEventListener('pointerover', aimHover, { capture: true, passive: true });
   D.addEventListener('pointerout', aimHover, { capture: true, passive: true });
+
+  // ---- the footer index's gold rule follows the pointer (Motion Primitives'
+  // animated background, as one 3px bar; a mouse only) -----------------------
+  D.addEventListener('pointerover', function (e) {
+    var box = e.target.closest && e.target.closest('.f-rail .f-box');
+    if (!box || !(W.matchMedia && W.matchMedia('(hover: hover)').matches)) return;
+    var rail = box.parentNode, m = rail.querySelector('.f-trail');
+    if (!m) {                                          // first hover: appear in place, no slide in
+      m = D.createElement('i');
+      m.className = 'f-trail';
+      m.setAttribute('aria-hidden', 'true');
+      m.style.transition = 'none';
+      rail.appendChild(m);
+    }
+    m.style.translate = '0 ' + box.offsetTop + 'px';
+    m.style.height = box.offsetHeight + 'px';
+    void m.offsetWidth;
+    m.style.transition = '';
+    rail.classList.add('has-trail');
+  }, { passive: true });
+  D.addEventListener('pointerout', function (e) {
+    var rail = e.target.closest && e.target.closest('.f-rail');
+    if (rail && !rail.contains(e.relatedTarget)) rail.classList.remove('has-trail');
+  }, { passive: true });
 
   // ---- count-up: a headline number counts to its value as it arrives -------
   // Only the page's own HTML numbers (the verdict, the hero's receipt), never

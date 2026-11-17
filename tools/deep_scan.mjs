@@ -489,10 +489,11 @@ await step('every preset', async () => {
 // ---- 6. the book ------------------------------------------------------------------
 async function bookState() {
   return page.evaluate(() => {
-    // A dossier card is the flex row whose first cell is its role label.
+    // A dossier card is a .book-row whose first cell is its role label; a lead
+    // or anchor row carries a third cell, its figure column (2026-11-17).
     const ROLES = ['Leads', 'Anchor', 'No role', 'Left out'];
-    const cards = [...document.querySelectorAll('[data-testid="stMarkdownContainer"] div')]
-      .filter(d => d.children.length === 2 && ROLES.includes(
+    const cards = [...document.querySelectorAll('[data-testid="stMarkdownContainer"] .book-row')]
+      .filter(d => d.firstElementChild?.classList.contains('book-role') && ROLES.includes(
         (d.firstElementChild.textContent || '').trim()
           .replace(d.firstElementChild.querySelector('.role-note')?.textContent.trim() || '', '').trim()));
     // the role cell holds the label, and on a NO ROLE card the weight it holds
