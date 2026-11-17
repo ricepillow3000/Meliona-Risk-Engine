@@ -2454,7 +2454,7 @@ with _contact_slot:
         with _form_col:
             with st.form("contact_form", clear_on_submit=False, border=False):
                 _c_name = st.text_input("Your name (optional)", max_chars=CONTACT_NAME_MAX,
-                                        key="contact_name")
+                                        key="contact_name", autocomplete="name")
                 _c_topic = st.selectbox("Topic", CONTACT_TOPICS, key="contact_topic")
                 _c_msg = st.text_area("Message", max_chars=CONTACT_MAX, height=160,
                                       key="contact_message",

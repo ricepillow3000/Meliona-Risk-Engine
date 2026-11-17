@@ -36,6 +36,8 @@ Read this before changing anything a visitor sees: the page, the map, the banner
    - Show John, in plain words and with a simple visual, why it is easier, simpler or more fun.
 6. **Fix the page, not the threshold**, when a probe fails. Two fix rounds, then ask John.
 7. **Add the new rule here** (and its test name) in the same pull request.
+8. **Review the change against the web interface guidelines** (the `web-design-guidelines` skill, a pinned
+   copy of Vercel's list). Where it disagrees with this file (it asks for Title Case), this file wins.
 
 ## John's five UI sources
 
@@ -250,6 +252,7 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 - **Text contrast:** 4.5:1 on the ground the text really sits on, measured after any opacity. Captions are drawn at full opacity because Streamlit's 60% opacity dropped them to 2.7:1. Metric labels use bronze text. Panel subtitles went from 2.04:1 to 5.91:1. — `test_text_colours_meet_wcag_aa`, `test_captions_and_small_labels_clear_aa_after_their_opacity`; caption_contrast_check.
 - **The map's words clear AA on its lightest ground,** the selected pairing row `#362C1E`. Tones for words: `--dimtext #A09788`, `--bronzetext #B49563`; the breach label `#D98463`; VaR labels gold at 75%. — 2026-10-20.
 - **One focus ring** for every in-page link: a 2px solid outline, no box-shadow ring, square, at 3:1 or better on its ground. Dark text bronze on beige, light bronze on stone. The page's scroller also gets a ring. — `test_every_button_wears_one_focus_ring_that_clears_3_to_1_on_its_ground`; cta_style_check.
+- **The standalone pages (404, offline, thank-you) wear the same ring**, never `outline: none` with only a colour change; the FAQ rows too (text bronze, 3px offset). The contact form's name field tells the browser it is a name (`autocomplete="name"`). — web-design-guidelines review, 2026-11-17 — `test_the_web_interface_guidelines_review_holds`.
 - **Status marks on the verdict:** the freshness mark differs in shape as well as pulse — a filled bronze square when live, a hollow grey square when stale.
 - **Meaning is never carried by colour alone:** verdicts, exclusions and data states are also stated in words.
 - **Map accessibility:**
@@ -385,6 +388,7 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 - **Optimistic update:** the rail lights on the press itself, within 150ms. Stale numbers dim to .72 and are never blanked. — 2026-11-09 — craft_check `optimistic`.
 - **Offline:** a notice when the connection drops, and an offline page for a fresh load with no connection. The service worker touches nothing else. — 2026-11-10.
 - **The head preloads dock.js** (no empty first screen).
+- **Streamlit's own bundle goes out gzipped.** Streamlit serves `/static/` raw; `serve.py`'s `StaticGzip` compresses each immutable file once and keeps it (21 MB of text becomes about 6 MB). On a 4G phone the largest paint fell from 8.9 s to 1.4 s and the headline from 7.6 s to 6.3 s. — speed check, 2026-11-17 — `test_streamlits_static_bundle_goes_out_gzipped_and_compressed_once`.
 - **First visit:** a full preset basket. An emptied basket says what to do next.
 - **Layout shift under 0.02** once the loading screen lifts. — craft_check.
 - **Freshness:** the "data pulled" mark updates at most every 30s (currently 60s) and pulses once per tick only while the data is live. A 1px bronze reading-progress line driven by the scroll timeline only. Nothing styles `stMain::before` (it merged with Streamlit's focus ring into a full-screen gold block, John 2026-11-06). — `test_freshness_ticker_does_not_tick_every_second`, `test_the_freshness_dot_and_the_reading_line_are_honest_and_still`, `test_a_key_and_the_wheel_never_paint_a_gold_block`; key_wheel_check (bronze over 3% of the screen fails).
@@ -423,6 +427,11 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 ---
 
 ## Turned down by John
+
+Tools reviewed and not used (2026-11-17, recorded in `.claude/skills/THIRD_PARTY.md`): img2threejs (photos turned
+into 3D objects to spin: John turned down 3D and spinning); awesome-design-md (copies another site's fonts,
+colours and spacing; this file is Meliona's own design file); the impeccable installer and an unpinned
+chrome-devtools-mcp server (the guidance and a pinned speed check were used instead).
 
 - Drawer designs: a stone plaque, a beige plaque, and a partial rule on the top edge ("looks a little tacky"). — 2026-11-05.
 - A watermark logo: the crest fragments behind the Grit Zone and the fan chart, and the old balance-scale and lion-tail engravings. — "reads tacky", 2026-10-30.

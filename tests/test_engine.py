@@ -7667,6 +7667,77 @@ def test_design_work_starts_from_the_rulebook_and_the_five_sources():
     assert "docs/design/DESIGN-RULES.md" in skill, "the ui-sources skill does not point to the rulebook"
 
 
+def test_the_web_interface_guidelines_review_holds():
+    """John, 2026-11-17: run Vercel's web-design-guidelines over the page. It
+    found three things the house rules also forbid: the 404, offline and
+    thank-you pages switched the focus outline off (a colour change alone), the
+    new FAQ rows wore an ink ring instead of the house's text-bronze one, and
+    the contact form's name field gave the browser no autofill hint."""
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for page in ("404.html", "offline.html", "thanks.html"):
+        css = (root / "public" / page).read_text(encoding="utf-8")
+        assert not re.search(r"focus-visible[^{]*\{[^}]*outline:\s*none", css), f"{page} hides the focus ring"
+        assert re.search(r":focus-visible\s*\{\s*outline:\s*2px solid #(6A5030|C6A26B); outline-offset: 3px", css), \
+            f"{page} has no house focus ring"
+    app = (root / "static" / "app.css").read_text(encoding="utf-8")
+    assert ".faq-row > summary:focus-visible { outline: 2px solid #6A5030; outline-offset: 3px; }" in app
+    main = (root / "main.py").read_text(encoding="utf-8")
+    name = main[main.index('st.text_input("Your name (optional)"'):][:200]
+    assert 'autocomplete="name"' in name, "the name field gives the browser no autofill hint"
+
+
+def test_streamlits_static_bundle_goes_out_gzipped_and_compressed_once():
+    """John, 2026-11-17 (the chrome-devtools speed check): a phone on 4G waited
+    6.9 s for the headline, most of it 9.8 MB of Streamlit's JavaScript sent
+    raw. Streamlit skips gzip on /static/ because Python would recompress on
+    every hit; these files are content-hashed and immutable, so serve.py
+    compresses each one once, keeps it, and sends it to any client that
+    accepts gzip (21 MB of text becomes about 6 MB). Nothing else changes:
+    other paths, errors, fonts, and clients without gzip get the raw bytes."""
+    import asyncio
+    import gzip
+    import serve
+    assert any(m.cls is serve.StaticGzip for m in serve.app._user_middleware), "serve.py does not compress"
+    body = b"function x(){return 1}" * 400
+    calls = []
+
+    def inner(status, ctype, payload):
+        async def app(scope, receive, send):
+            calls.append(scope["path"])
+            await send({"type": "http.response.start", "status": status,
+                        "headers": [(b"content-type", ctype), (b"content-length", str(len(payload)).encode())]})
+            await send({"type": "http.response.body", "body": payload[:100], "more_body": True})
+            await send({"type": "http.response.body", "body": payload[100:]})
+        return app
+
+    def run(app, path, enc=b"gzip, br", method="GET"):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(m):
+            sent.append(m)
+        scope = {"type": "http", "method": method, "path": path, "headers": [(b"accept-encoding", enc)]}
+        asyncio.run(app(scope, receive, send))
+        head = dict(sent[0]["headers"])
+        return sent[0]["status"], head, b"".join(m.get("body", b"") for m in sent[1:])
+
+    mw = serve.StaticGzip(inner(200, b"text/javascript", body))
+    status, head, out = run(mw, "/static/js/index.abc123.js")
+    assert status == 200 and head[b"content-encoding"] == b"gzip" and b"accept-encoding" in head[b"vary"].lower()
+    assert gzip.decompress(out) == body and int(head[b"content-length"]) == len(out) < len(body) / 3
+    again = run(mw, "/static/js/index.abc123.js")
+    assert again[2] == out and "/static/js/index.abc123.js" in mw.cache, "the second visitor does not reuse the first gzip"
+    assert run(mw, "/static/js/index.abc123.js", enc=b"identity")[2] == body, "a client without gzip got gzip"
+    assert run(mw, "/static/js/index.abc123.js", method="HEAD")[1].get(b"content-encoding") is None
+    for path, status_, ctype in (("/app/static/app.css", 200, b"text/css"), ("/static/js/missing.js", 404, b"text/plain"),
+                                 ("/static/media/font.woff2", 200, b"font/woff2"), ("/", 200, b"text/html")):
+        _s, h, o = run(serve.StaticGzip(inner(status_, ctype, body)), path)
+        assert h.get(b"content-encoding") is None and o == body, f"{path} was changed"
+
+
 def test_a_waiting_press_yields_only_to_the_readers_own_hand():
     """Live audit 8c early, PR #51 (2026-11-06, intermittent): "Skip to the
     analysis", pressed 200 ms after it appeared, waited for #analysis, then
