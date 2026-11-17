@@ -7738,6 +7738,22 @@ def test_streamlits_static_bundle_goes_out_gzipped_and_compressed_once():
         assert h.get(b"content-encoding") is None and o == body, f"{path} was changed"
 
 
+def test_the_deep_scan_reads_book_cards_by_their_class_not_their_shape():
+    """Live audit 10 on c5e5130 (2026-11-17): the Book's lead and anchor rows
+    gained a figure column, a third cell, and deep_scan's card reader - "a div
+    with exactly two children" - stopped seeing them: "cards: 0 lead, 0 anchor"
+    against a headline of 12 names. Cards are read as .book-row with a
+    .book-role first cell, so a new cell in a row never hides it again."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    scan = (root / "tools" / "deep_scan.mjs").read_text(encoding="utf-8")
+    reader = scan[scan.index("async function bookState()"):scan.index("await step('the book'")]
+    assert "children.length === 2" not in reader, "the card reader counts a row's cells again"
+    assert ".book-row" in reader and "classList.contains('book-role')" in reader
+    main = (root / "main.py").read_text(encoding="utf-8")
+    assert '<div class="book-row {_ROW[_d.role]}"><div class="book-role">' in main, \
+        "the page's card markup moved; update deep_scan's reader with it"
+
+
 def test_a_waiting_press_yields_only_to_the_readers_own_hand():
     """Live audit 8c early, PR #51 (2026-11-06, intermittent): "Skip to the
     analysis", pressed 200 ms after it appeared, waited for #analysis, then
