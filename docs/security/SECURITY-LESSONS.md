@@ -164,3 +164,11 @@ The four hardening items left open that day were closed the same day, each test-
 | One compressed websocket message could unpack to 16 MB before serve.py refused it | `server.maxMessageSize` 16 -> 1 MB, the same cap as the largest message out: measured at 103 KB over a full-depth deep scan fed 30 years per name; the deep scan now fails if any message takes more than half the cap | `test_deploy_config_keeps_the_visitor_out_of_the_operator_seat` |
 | The image's base was a tag | pinned to today's `python:3.13-slim` digest; Dependabot watches `docker/` and proposes the next one | `test_the_image_is_pinned_and_only_main_may_publish_it` |
 | `packages: write` was granted on every branch | publishing is its own job, on main only, after the image passed its checks | same test |
+
+### 2026-11-17: the gzip cache could be filled with made-up paths (review of #78)
+`serve.py`'s new `StaticGzip` kept one gzipped copy per `/static/` path, up to 1,024. Streamlit answers any made-up
+`/static/` path with its page (200, text/html), so about 1,024 requests - under the rate limit - filled the cache with
+junk, after which the real bundle was never kept and every visitor's load recompressed about 21 MB on the one shared
+process. Reproduced against the real app; fixed test-first (`test_made_up_static_paths_cannot_fill_the_gzip_cache`,
+planted as M55): the page fallback is still gzipped but never kept, so only the bundle's own files (~320) fill the
+cache. Lesson: a cache keyed by anything a visitor types is a visitor-keyed cache, however static the files behind it.

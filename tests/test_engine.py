@@ -7754,6 +7754,45 @@ def test_streamlits_static_bundle_goes_out_gzipped_and_compressed_once():
         assert h.get(b"content-encoding") is None and o == body, f"{path} was changed"
 
 
+def test_made_up_static_paths_cannot_fill_the_gzip_cache():
+    """2026-11-17 review of #78: any made-up /static/ path gets Streamlit's page
+    back (200, text/html), and StaticGzip kept a copy per path. About 1,024
+    requests - under the rate limit - filled its cache with junk, after which
+    the real bundle was never kept and every visitor's load recompressed about
+    21 MB on the one shared process. Only the bundle's own files are kept."""
+    import asyncio
+    import gzip
+    import serve
+    page = b"<!doctype html><html>" + b"x" * 6000
+    js = b"function x(){return 1}" * 400
+
+    async def streamlit(scope, receive, send):      # the fallback: any unknown path is the page
+        real = scope["path"] == "/static/js/index.abc123.js"
+        body, ctype = (js, b"text/javascript") if real else (page, b"text/html; charset=utf-8")
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", ctype)]})
+        await send({"type": "http.response.body", "body": body})
+
+    def get(mw, path):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(m):
+            sent.append(m)
+        scope = {"type": "http", "method": "GET", "path": path, "headers": [(b"accept-encoding", b"gzip")]}
+        asyncio.run(mw(scope, receive, send))
+        return b"".join(m.get("body", b"") for m in sent[1:])
+
+    mw = serve.StaticGzip(streamlit)
+    for i in range(serve.GZIP_CACHE_MAX + 50):
+        get(mw, f"/static/made-up-{i}.js")
+    assert not any("made-up" in p for p in mw.cache), \
+        f"{sum('made-up' in p for p in mw.cache)} made-up paths kept"
+    assert gzip.decompress(get(mw, "/static/js/index.abc123.js")) == js
+    assert "/static/js/index.abc123.js" in mw.cache, "the real bundle file was not kept"
+
+
 def test_the_deep_scan_reads_book_cards_by_their_class_not_their_shape():
     """Live audit 10 on c5e5130 (2026-11-17): the Book's lead and anchor rows
     gained a figure column, a third cell, and deep_scan's card reader - "a div

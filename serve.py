@@ -142,7 +142,10 @@ class StaticGzip:
         packed = self.cache.get(path)
         if packed is None:
             packed = gzip.compress(body, 6)
-            if len(self.cache) < GZIP_CACHE_MAX:
+            # a made-up /static/ path gets the page (text/html) back: keeping one
+            # per path let a script fill the cache and push the real bundle out
+            page = head.get(b"content-type", b"").startswith(b"text/html")
+            if not page and len(self.cache) < GZIP_CACHE_MAX:
                 self.cache[path] = packed
         headers = [(k, v) for k, v in start.get("headers", []) if k.lower() not in (b"content-length", b"vary")]
         headers += [(b"content-encoding", b"gzip"), (b"content-length", str(len(packed)).encode()),
