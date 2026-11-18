@@ -60,6 +60,18 @@ Paste this into a new chat session to bring it up to speed instantly.
   closed #75 itself. The first Live audit after #77 failed only step 5:
   the front end's #73 merged 76 s later, so Railway already served the
   newer commit; the run on d9c95e1 passed.
+- **2026-11-17, the gzip cache could be filled with made-up paths (back-end
+  session, PR #81):** the front end's `StaticGzip` (#78, in `serve.py`)
+  kept one gzipped copy per `/static/` path, up to 1,024. Streamlit answers
+  any made-up `/static/` path with its page (200, text/html), so about
+  1,024 requests - under the rate limit - filled the cache with junk; after
+  that the real bundle was never kept and every visitor's load recompressed
+  about 21 MB on the one shared process. Reproduced against the real app.
+  The page fallback is still gzipped but never kept, so only the bundle's
+  own files (~320) can fill the cache
+  (`test_made_up_static_paths_cannot_fill_the_gzip_cache`, planted as M55;
+  SECURITY-LESSONS.md, 2026-11-17). Lesson: a cache keyed by anything a
+  visitor types is a visitor-keyed cache, however static the files behind it.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
   day, now one request per made-up name (2026-11-13); presets and cached
