@@ -4598,6 +4598,22 @@ def test_the_link_preview_quotes_the_newest_live_audit():
                 f"the cover's {label!r} figure {f} is not in {newest.name}"
 
 
+def test_the_linkedin_cover_leaves_no_empty_corner_beside_the_photo():
+    """John, 2026-11-17: "I don't like the empty space". LinkedIn lays the
+    profile photo over the cover's lower left, so only that spot stays clear:
+    the crest and name start at the 64px margin across the top, and the words
+    below them start right of the photo (past 400px)."""
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    cover = (root / "tools" / "linkedin_banner.html").read_text(encoding="utf-8")
+    field = re.search(r"\.field \{[^}]*left: (\d+)px", cover)
+    assert field and int(field.group(1)) == 64, "the crest and name do not start at the 64px margin"
+    body = re.search(r"\.body \{[^}]*margin-left: (\d+)px", cover)
+    assert body and 64 + int(body.group(1)) >= 400, "the words under the name run into the photo's spot"
+    head = cover[cover.index('<div class="head">'):cover.index('<div class="body">')]
+    assert "<!--CREST-->" in head and "<h1>Meliona</h1>" in head, "the top row is not the crest and the name"
+
+
 def test_public_files_give_crawlers_and_link_previews_a_real_head(tmp_path=None):
     """LinkedIn/Slack previews and search crawlers do not run JavaScript, so
     tools/public_files.py writes the head they read into Streamlit's static

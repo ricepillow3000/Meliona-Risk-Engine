@@ -378,7 +378,9 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
   - Leave out: fan charts, stat tiles, eyebrow capitals, italic subtitles and the date. Avoid a phrase like "727 of 728", which reads as one failure.
   - Layout: twelve columns, 64px margins, 24px gutters; a stone block from column 8 to the edge with the faint crest; a plinth with a gold cap. Gelasio and FreeSans as Georgia/Helvetica stand-ins. No gradients outside the crest, no rounded cards, glow or shadow.
   - — "weight, stability and defense; Swiss discipline, primitive shapes and chevrons, real architecture" (2026-11-05); "the image carries no date"; preview figures (2026-11-13) — `test_the_link_preview_quotes_the_newest_live_audit`.
-- **LinkedIn cover:** the same system cut into a strip. The lower-left corner carries nothing (the profile photo sits there); words start at 460px; it uses the same audit receipt as the share image.
+- **LinkedIn cover:** the same system cut into a strip, using the same audit receipt as the share image.
+  - No empty space: only the profile photo's spot (lower left) stays clear. The crest, the name and the kicker run across the top from the 64px margin; the rule and claim sit right of the photo, from 404px.
+  - — "I don't like the empty space", 2026-11-17 (it used to leave 0–460px blank) — `test_the_linkedin_cover_leaves_no_empty_corner_beside_the_photo`.
 
 ## Loading and app feel
 
