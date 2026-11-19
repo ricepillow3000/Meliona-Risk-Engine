@@ -4,10 +4,237 @@ Paste this into a new chat session to bring it up to speed instantly.
 
 ---
 
+## Start here: where things stand (updated 2026-11-13)
+
+- **Live:** https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app
+  (Railway deploys `main`; the Live audit on `main` proves the deployed
+  build stamp, step 5).
+- **Resuming in a new session:** read this section, then `CLAUDE.md` and
+  `docs/security/SECURITY-LESSONS.md`. Two sessions have been working side
+  by side: the back end (`src/`, `serve.py`, `tools/` checks, workflows,
+  tests) and the front end (`main.py`, `hero.py`, `static/`, `public/`).
+  Before touching a file the other side owns, say so in the PR. Start every
+  branch from the latest `main`; nothing is waiting on any branch.
+- **2026-11-19, Risk by name is a dumbbell (front-end session, ME-34):**
+  the idea John deferred on 11-17 ("worth a later look"). The grouped bars
+  drew two bars per name, and under equal weight every gold bar was the
+  same length. Now one row per name: a gold square at its share of the
+  money, a dark diamond at its share of the swings, a bronze hairline
+  between them, largest risk share on top; the chart is 30px a name, not
+  46. Same numbers (`risk_contributions` on the base weights); the trace
+  names `dollar weight` and `risk share` stay because deep_scan reads them
+  (`risk_by_name_fig` in `main.py`;
+  `test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares`).
+- **2026-11-12/13, front-end session (PRs #63, #69, #70):** John's story
+  and the five answers rewritten to read aloud (shorter sentences, no
+  advice, no forecast); bloated captions cut to 45 words or fewer
+  (craft_check enforces it); EWMA explained in plain words wherever it
+  shows; the mouse wheel glides over the Risk Topology map's bottom edge
+  too; blocks arrive as the reader scrolls, headings from the left and
+  side columns from their own side (`tools/arrival_check.mjs`); and every
+  word a visitor reads says "anchor", never "cushion" (the code's own
+  names, `Role.CUSHION` and the payload's `cushion` field, stay).
+- **2026-11-13, a full back-end security audit (back-end session, PRs #72
+  and #74, both merged; #72 live at fefc8a7, Live audit green):** four
+  cold readers (CI and supply chain, the data path, HTML/JS output,
+  `serve.py` and netguard) found no way in. Everything they did find is
+  fixed, each test-first and planted as a bug (M46-M53, all caught):
+  - cache files were named by 12 hex characters of md5, so a basket could
+    be searched offline to land in a preset's slot: now full sha256;
+  - the cache prune could evict the anchor shelf's USMV: anchors now count
+    as a preset;
+  - a typo logged an ERROR and a traceback on every rerun: one INFO line
+    (`log_no_data`; a preset with no data is still an incident);
+  - one real name beside made-up ones had each made-up name asked three
+    times: only a symbol we know is real is asked again;
+  - Dependabot PRs ran no audit: `dependabot/**` now triggers all four;
+  - starlette, uvicorn and websockets are pinned; the image ignores the
+    same secret files git does;
+  - host settings (e-mails, phone, site URL) are checked against their
+    shape when read (`host_setting`);
+  - `server.maxMessageSize` 16 -> 1 MB (largest message measured at 103 KB
+    with 30 years per name; the deep scan fails past half the cap);
+  - the image's base is pinned by digest (Dependabot watches `docker/`),
+    and only a main-only job may publish it.
+  Nothing from the audit is left open (SECURITY-LESSONS.md, 2026-11-13).
+  One timing check (a 217 ms frame in one button's glide, limit 200 ms)
+  failed once on the CI runner after #72 and passed on re-run.
+- **2026-11-14, Dependabot stays on the site's Python (PR #77, live at
+  d9c95e1, Live audit green):** minutes after #74 let Dependabot watch
+  `docker/`, it proposed python 3.13-slim -> 3.15-slim (#75), which would
+  have moved the image off the site's Python (`runtime.txt` 3.13). Its
+  docker entry now ignores minor and major `python` updates: it may still
+  propose new builds of 3.13 (security patches, by digest), and a version
+  change moves `runtime.txt` and the image together, on purpose. Pinned by
+  `test_the_image_is_pinned_and_only_main_may_publish_it` (M54). Dependabot
+  closed #75 itself. The first Live audit after #77 failed only step 5:
+  the front end's #73 merged 76 s later, so Railway already served the
+  newer commit; the run on d9c95e1 passed.
+- **2026-11-17, the gzip cache could be filled with made-up paths (back-end
+  session, PR #81):** the front end's `StaticGzip` (#78, in `serve.py`)
+  kept one gzipped copy per `/static/` path, up to 1,024. Streamlit answers
+  any made-up `/static/` path with its page (200, text/html), so about
+  1,024 requests - under the rate limit - filled the cache with junk; after
+  that the real bundle was never kept and every visitor's load recompressed
+  about 21 MB on the one shared process. Reproduced against the real app.
+  The page fallback is still gzipped but never kept, so only the bundle's
+  own files (~320) can fill the cache
+  (`test_made_up_static_paths_cannot_fill_the_gzip_cache`, planted as M55;
+  SECURITY-LESSONS.md, 2026-11-17). Lesson: a cache keyed by anything a
+  visitor types is a visitor-keyed cache, however static the files behind it.
+- **Accepted risk, still open by choice:** a script inventing new made-up
+  symbols on every rerun can spend the web process's 5,000-request Yahoo
+  day, now one request per made-up name (2026-11-13); presets and cached
+  baskets keep working. Fix only on evidence of abuse (SECURITY-LESSONS.md,
+  2026-11-12).
+- **2026-11-12, end of day means end of day, and a cold security review
+  (back-end session, PR #64, live at cced9d4):** in market hours Yahoo's
+  daily download carries today's row at the live price, and the cache kept
+  it for up to 6 hours. A bar now counts only once its day is over on New
+  York's clock (4:30pm; 8pm for FX, futures, crypto), a cache pulled before
+  a close goes stale at that close, and the warm loop wakes 3 minutes after
+  each close. Live audit step 1 checks every name's newest bar is Yahoo's
+  latest finished close (and, for US listings, a second vendor when
+  reachable). An independent read-only review found seven holes, each fixed
+  test-first and planted as a bug (M41-M45): Streamlit's upload route
+  (hidden, 404), redirects followed before being checked (netguard now
+  checks each hop first), client-chosen X-Forwarded-For, IPv6 /64s,
+  unbounded limiter tables, 16 MB widget-state messages (256 KB cap), and
+  made-up symbols spending the Yahoo budget. One risk is accepted and
+  written down (`docs/security/SECURITY-LESSONS.md`). Three audit-tool bugs
+  surfaced on the way (the raw reader's blank newest adjclose, and the
+  audit's own forward-fill dating a stock's old close to an FX-only day).
+- **2026-11-10, break it on purpose, and hardening for real traffic
+  (back-end session, PRs #61 and #62):** `tools/mutation_check.py` plants
+  known bugs one at a time (now 45; `.github/workflows/mutation.yml` weekly)
+  and names the first red test; the first run caught 21 of 36, the tests
+  added since catch every one. `serve.py` caps an address's websocket
+  messages (600 a minute, then 1013); Live audit 8e floods from one address
+  while ten visitors load (`tools/flood_check.py`, which reads the server's
+  replies like a browser - unread, they hid the hang-up under load); the
+  credential test reads every tracked file; LAUNCH_CHECKLIST #187-192 maps
+  auth, RLS, Redis and queues onto an app with no accounts or database.
+- **Done on 2026-11-05 (all merged):** the story cut (ME-28), the close
+  (About, questions, contact), nothing freezing when a drawer opens on an
+  iPhone, clean hairline drawers, John's bio and contact (his Gmail plus
+  Meliona support plus LinkedIn), the engine's controls in plain words, and
+  John's story with his second photo (below, in the done list).
+- **2026-11-10, no generated-site tells, and app feel (front-end session,
+  PR #60):** square controls, square help and freshness marks, no 3D on the
+  first load, the footer as one contents index, two generic headings
+  rewritten; loading lines as shimmering skeletons, a press on every
+  control (iPhones too), the dock script preloaded, an offline notice and
+  a service-worker offline page. Pinned by two tests and craft_check.
+- **2026-11-09/10, craft, calm motion and plain words (front-end session,
+  PR #57, live at ea65435):** the CRAFT layer in `static/app.css` (kerning,
+  tabular figures, 68ch prose, no widows, OKLCH tints, safe area, 44px touch
+  targets, optical centre, origin-aware hover, an optimistic "Updating"
+  rail, count-up numbers), measured by `tools/craft_check.mjs`. John then
+  said the smooth scroll made him motion sick and forcing past the top
+  showed a gap: every block now arrives one calm way (a 16px rise and a
+  fade over .6s; no side swings, card turns or zoom), the wheel settles in
+  ~0.6s (`TOW` 3.8 -> 10) and the rubber band is gone (hard ends) -
+  `test_motion_is_calm_enough_to_read_while_scrolling`. The crest no longer
+  sits behind "Inside the engine"; About the builder is in John's own voice;
+  the Book's sentences, the cone/map/crisis/data-check captions and the
+  map's model note are in plain words (the full model statement folds
+  under "The maths, for specialists").
+- **2026-11-09, evaluation and back-end clean-up (back-end session, PR #58):**
+  `src/` went from 5,551 to 4,934 lines (-617) with every number unchanged:
+  comments and docstrings now short and plain, each module still saying how
+  its math works and citing its papers; each batch was checked old vs new
+  output for exact equality, then by the full suite. Two bugs fixed: a
+  basket's provenance `.meta.json` was written in place while the warm pass
+  rewrites it under live visitors, so a read mid-write crashed the page
+  (`_write_json`, atomic; `provenance()` reads a bad file as no record); and
+  the Grit Zone re-derivation test sat below `tests/test_engine.py`'s
+  `__main__` block, so it never ran (`test_no_test_hides_below_the_script_runner`).
+- **2026-11-06, motion (front-end session):** one motion vocabulary for the
+  whole page - `static/app.css` "MOTION" holds the tokens and rules, and
+  `static/reveal.js` the parts that need script. Dropdowns and help tips
+  open in 200ms from scale .95 out of the control that opened them and
+  close back into it in 160ms (react-aria waits for the `[data-exiting]`
+  animation); menu rows, drawer and tab contents and the thank-you rows
+  arrive 30ms apart; buttons sink to .97 when pressed and their hover
+  colour rises as a mask; the slider thumb (its pre-1.66 selector had
+  matched nothing) is the square charcoal thumb again, stretches 12% while
+  dragged and is never tweened; the drawer chevron arrives with scale and
+  blur; the CVaR tick travels an arc; John's photos are uncovered by a mask;
+  the receipt pulses once; the wheel tow is heavier (`TOW` 4.6 -> 3.8) and
+  the page stretches past its ends and eases back (no bounce anywhere: no
+  curve leaves 0..1). (Superseded 2026-11-09: calm arrivals, `TOW` 10, no
+  rubber band.) Pinned by `test_motion_follows_the_house_rules`.
+- **2026-11-09, the page's craft:** John asked for kerning, optical
+  centre, tabular numbers, layout shift, tracking, optimistic update,
+  x-height, touch targets, leading, origin-aware animation, OKLCH, widows,
+  safe area, stagger, line length, affordance, combo box, interruptible
+  animation and shared element transitions, plus whatever makes the page feel
+  alive while keeping the data plain. `tools/craft_check.mjs` turns each into
+  a reading of the rendered page (desktop and an iPhone): 16 of 27 failed
+  before, 27 of 27 pass after. Added in `static/app.css` "CRAFT" and
+  `static/reveal.js`: kerning and legibility, tabular lining figures (map
+  included), `font-size-adjust`, 68ch prose wrapping pretty and balanced
+  headings, OKLCH state tints, `viewport-fit=cover` plus safe-area gutters,
+  44px touch targets (help marks, pickers, contact and footer links), the
+  hero's words lifted to the optical centre in every height tier with the same
+  totals (the CTA does not move), a button hover that opens from where the
+  pointer came in, an "Updating" rail lit on the press itself (Streamlit's own
+  sign waits 500ms; react-aria radios fire no `change`, so a press on an
+  unchosen control counts), stale numbers kept readable at .72, and the
+  verdict and hero receipt counting up to the server's exact text. Already
+  true and now measured: stagger 90ms, the shared tab underline (it also
+  retargets mid-slide on its own - a fix for that was written, measured
+  unneeded, and deleted), the ticker combobox filtering as you type, layout
+  shift 0.0002 once the loading screen lifts (the page assembles under it).
+  Negative tracking stays banned (2026-11-04: the generated-page look).
+- **2026-11-06, the wheel glides over the map:** John saw the page scroll
+  smoothly everywhere but the Risk Topology map, where it went back to the
+  browser's step. A wheel over a frame goes to the frame's own window, so
+  `static/reveal.js`'s tow never saw it. Every same-origin frame's window
+  now gets the same listener (after each load; Streamlit rewrites the map's
+  srcdoc on a rerun), and the map's own scrolling panels still take the
+  wheel first. `tools/map_wheel_check.mjs` (Live audit 8b) measures it with
+  the real wheel at three desktop sizes: one notch over the map moved the
+  page 100px in 1 frame before and ~98px over ~63 frames after; a 14-notch
+  run across the map never steps more than 15px a frame (112px before).
+- **2026-11-06, frozen arrivals fixed:** John saw headings, text and
+  buttons stop part-way or sit out of place at the foot of the screen until
+  a scroll brought them into full view. Three causes, each measured by a
+  reader-paced wheel probe (after every stop: blocks waiting on screen /
+  still moving / half-drawn heading rules, 17 / 16 / 4 before, 0 / 0 / 0
+  after at 390, 1440 and 1920): arrivals only started 8% inside the bottom
+  edge, and the observer watched the window, which stMain clips first; the
+  arrival's tail was 1.45s plus up to 720ms of stagger; the heading rules
+  followed the scroll position. Now the observer is rooted on stMain and
+  starts 15% below the edge, the settle is 1.1s with at most 450ms stagger,
+  and each rule draws once as its heading arrives. No scroll listener is
+  left in reveal.js.
+- **2026-11-06 back-end sweep (security + no bloat):** CLAUDE.md opens with
+  John's four rules (think first, simplest code, surgical changes, prove it
+  with a test). 597 lines nothing shipped were deleted from src/ and tools/:
+  `src/factors.py`, `src/comovement.py`, `src/hedge.py`, the AI-capex recovery
+  race in `src/conviction.py`, parametric VaR, `clear_cache` and four more
+  unused functions - and the 14 tests (287 lines) that only exercised them.
+  `test_src_holds_only_code_the_app_or_its_audits_run` keeps it that way.
+  Every workflow checkout now sets `persist-credentials: false`
+  (`test_no_workflow_checkout_leaves_the_token_on_disk`). A full read of the
+  back end (serve.py, src/, tools, Docker, Railway, workflows) found no other
+  path from a visitor to harm.
+- **How work ships:** branch `claude/...` -> `python -m tools.check` -> draft
+  PR -> ready -> auto-merge on the required `live-audit` check -> Railway
+  deploys -> dispatch the Live audit on `main` and read step 5.
+- **Open, only when John asks:** the Pod 4 board card ("update the board").
+  Nothing else is pending.
+- **Rules that bite:** John's Gmail may appear only in the contact UI and
+  PRIVACY.md (never TERMS, SUPPORT or LAUNCH_CHECKLIST); capitals only in
+  the label voice; text colours must clear AA; anything a button flies to
+  is never animated; nothing above the tab strip may change the number of
+  top-level elements.
+
 ## What this project is
 
 **Meliona** is an institutional-grade **Portfolio Optimization & Risk Engine**
-with a live Streamlit dashboard, built by a 2nd-year Data Analytics student to
+with a live Streamlit dashboard, built by a Computer Information Systems student (AI & Analytics) to
 be recruiter-facing (the goal is a public live link on a resume). The name
 merges "Durand" (Old French, "enduring/built to withstand hard times") with
 "Mereoleona" (mother lioness) - it ties into the existing lion-crest logo and
@@ -862,6 +1089,72 @@ risk-engine/
   Options audit, written after #21 was opened, looked the boxes up by the old
   keys and failed every page run (`KeyError: 'watch_a'`); it now finds them
   by their labels, Asset A and Asset B.
+- ✅ **The Book's sentence no longer freezes mid-turn (2026-11-04)**. John's
+  screenshot: the Book's full-width sentence stood as a sliver between the two
+  controls. A card turn (rotateY on its spine) is for a narrow block in the
+  middle; given to a 1,488px block (measured while its placeholder was still
+  small, then filled in by a rerun), its near edge swings past the eye at
+  perspective 1000px. reveal.js now reads layout widths, never gives a block
+  with no size yet or wider than 45% of the page a card turn, sets the card's
+  eye distance to 3x its width, lands a block at once if it is resized
+  mid-move (ResizeObserver) or its move is cancelled
+  (`test_a_wide_block_never_turns_like_a_card_and_never_hangs_mid_turn`;
+  browser run: a 260px middle block widened to 1,400px mid-turn landed in
+  under 120 ms). The crest's ripple is 15% stronger (scale 1.04, opacity .48).
+- ✅ **The cone in a wind tunnel (2026-11-04)**. John: smoke blown through the
+  cumulative-return cone, many colours that "must not be random" but follow
+  the return and the trading days, fully interactive. One fixed scale,
+  `RETURN_SCALE` in main.py (oxblood at -50%, sand at break-even, indigo at
+  +60%), colours the band fills at exactly the return each height stands for
+  (Plotly `fillgradient`, start/stop in the y-axis's own % units) and ships
+  in the figure's `layout.meta` to `static/windtunnel.js`, which blows smoke
+  through the cone: each particle is a percentile level between 5% and 95%
+  riding the chart's own computed paths, coloured by the return where it is;
+  eddies come from a stream function (incompressible, flat on the 5% and 95%
+  edges) so the smoke never bunches into lanes or leaves the cone, and all
+  drawing is clipped to the cone's outline. The pointer parts the smoke, a
+  click sends a gust, the hover readout lists all five levels best-first.
+  Off screen or in a hidden tab it stops; under reduced motion it never
+  loads. `window.__melionaWind.check()` reads each particle's return back
+  from its pixel through Plotly's axis; deep_scan's `windAgrees` runs it on
+  every cone it checks (baseline, risk parity, custom shock, every crisis,
+  the short book). Browser runs: ~980 particles, 0 coloured wrong, 0 outside
+  the cone, at 1440px and on an iPhone 15
+  (`test_the_cone_is_coloured_by_return_and_the_smoke_rides_the_computed_cone`).
+
+- ✅ **The cone's flow is a lattice Boltzmann solve bound to the data
+  (2026-11-04)**, replacing the smoke above at John's direction ("Every line,
+  color, velocity vector, and animation timestep must be directly driven by
+  and deterministically bound to the provided data array", FluidX3D's
+  engineering look, no glass or gloss, not pixelated, transparent at rest, red
+  only where the flow collides with the data, and a Verification Overlay).
+  `static/windtunnel.js` runs a D2Q9 BGK lattice Boltzmann solver on the GPU
+  (WebGL2, float32 render targets, MRT): the five computed percentile paths
+  are rasterised as solid walls (halfway bounce-back), air enters on the left,
+  the top and bottom rows are free stream, the right is a pressure outlet, and
+  24/16 columns of lead-in/run-out are computed off-plot so the boundaries sit
+  away from the data. No noise or timers: fixed steps per frame,
+  steps per trading day = plot columns / (inflow x trading days), and the
+  inflow on each replayed day follows the cone's widening that day. The air is
+  drawn at screen resolution (bilinear speed between nodes) through main.py's
+  stepped `FLOW_SPEED_STEPS` (transparent at rest; charcoal, deep blue, blue,
+  teal); the paths are drawn as smooth lines through their exact points, each
+  segment in its `FLOW_WALL_STEPS` pressure step (Cp against the outflow: red
+  only on the data); streamlines are seeded every 5 trading days along each
+  path and at the inflow (Heun steps, bilinear velocity, stop where still).
+  A faint lattice mesh and a 1px domain box frame it; the chart's
+  "Verification Overlay" button draws velocity arrows with their speeds, the
+  highest path pressures with their Cp, the fastest cell, and the solver's
+  state. `check()` proves the picture: every node's colour against its own
+  computed speed, every path segment's pixel against its pressure step, no
+  red pixel off a path, every path point on a wall, the peak pressure red.
+  Local runs: GPU mode 46,440 nodes / 1,224 segments, 0 mismatches; software
+  still mode 8,840 / 1,225, 0 mismatches; glide checks 44/44
+  (`test_the_cone_flow_is_a_lattice_boltzmann_solve_bound_to_the_data`).
+  Also: ubuntu-latest moved to 26.04, which Playwright 1.56.1 cannot install
+  Chromium on; the Live audit job is pinned to ubuntu-24.04
+  (`test_the_browser_audit_runs_on_an_os_its_playwright_supports`), and the
+  Options audit's log-year check reads each path's own ending wealth.
 
 - ✅ **Ship hardening: John's 2026-11-04 security, UX and design lists**
   (LAUNCH_CHECKLIST #99-138). Three read-only reviews (security, UX in a
@@ -943,3 +1236,202 @@ two paid-vendor-dependent pieces remain explicit backlog items:
    (Polygon.io/Alpaca/IEX) is scoped and ready to wire in once an API key exists.
 3. Extend liquidity: per-asset liquidity-adjusted VaR, or a book-size slider
    preset that showcases a small/mid-cap basket where days-to-liquidate bites.
+
+- ✅ **The cone's flow, redrawn the way FluidX3D draws a field (2026-11-04,
+  second pass)**. John: the smooth coloured field was "not the design I was
+  looking for" - he wanted FluidX3D's grid cells and fluid motion, with "each
+  color, cell, line, animation and where it's going" reflecting the chart.
+  Studied FluidX3D's own source (`kernel.cpp`: `graphics_field`,
+  `colorscale_rainbow`, `integrate_particles`, `particle_boundary_force`, the
+  SUBGRID Smagorinsky-Lilly model; `defines.hpp`; the D2Q9 Karman setup).
+  `static/windtunnel.js` now:
+  - draws ONE LINE PER CELL of a grid laid on the chart's axes - columns of
+    ND trading days (1, 2, 3, 5, 10 or 21), rows of DR percent of return
+    aligned on 0% - centred in its cell, pointing where the computed air there
+    goes, coloured by FluidX3D's `colorscale_rainbow` (main.py `FLOW_AIR`: the
+    air takes the cool half, black to green; still air under FluidX3D's 0.1
+    cut-off is transparent; red is left to the data);
+  - releases FluidX3D's tracer particles, one per return-level row every ND
+    trading days, moved each solver step by the computed velocity: in
+    undisturbed air they ride one grid cell apart, so the cone's effect is
+    their departure from the grid;
+  - runs ~111,000 lattice cells on a desktop (open air computed above and
+    below the plot, so the cone is a body in a stream, not a plug in a pipe),
+    tau 0.52 with FluidX3D's subgrid model, a spin-up from still air, and a
+    step counter that passes 100,000 in about a minute;
+  - colours a path by Cp against the free stream at the same trading day,
+    counting only moving air: red lands on the cone's nose (day 1) and the
+    steep early face of the 95th path, never on the still interior;
+  - prints its state (lattice, step, trading day) on the frame; the
+    Verification Overlay adds the grid in days x percent, sample speeds with
+    arrowheads, the solid cells' outline (VIS_FLAG_LATTICE), the top Cp and
+    the solver's numbers;
+  - reduced motion now loads it and gets one still frame (it never loaded).
+  `check()` proves every line's colour and direction, every line's trading
+  day and return level, every particle's step (FluidX3D's integrate_particles
+  recomputed on the CPU) and colour, every path segment's pressure step, and
+  no red off the data. Local runs (offline market, 1440px, iPhone 15, reduced
+  motion; 1,800 / 6,000 / 15,000 steps, baseline and volatility shock): 0
+  mismatches everywhere. CI's flow_check now runs 6,000 steps (past spin-up).
+
+- ✅ **The page's own motion first: the cone's tunnel no longer costs the
+  arrivals or the buttons (2026-11-04, live report)**. John on the live site:
+  the page "felt instantly loaded", buttons did not work, scrolling had none of
+  the transitions. CI never runs the tunnel (its GPU is software), so this was
+  invisible there. `static/windtunnel.js` built its WebGL context, compiled
+  its programs and read the GPU back synchronously at load, off screen; on
+  Windows (ANGLE) that compile can freeze the page for seconds. Now nothing is
+  built while the page loads (an IntersectionObserver watches the cone; the
+  build waits for idle time with no glide, arrival or scroll), one context per
+  cone (no probe context), programs compile in the background
+  (`KHR_parallel_shader_compile`), the live loop reads back through a fence
+  and a pixel-pack buffer (never a blocking readPixels), the loop holds while
+  a glide flies (the glide's stop handle lives on the document: the old check
+  read the window and never held), while blocks arrive (`__melionaReveal.moving()`)
+  or the reader scrolls, and a card that cannot keep up even at 4 steps a
+  frame keeps a still frame. reveal.js: only a CARD lands at once when it
+  changes size mid-arrival. Local, with the GPU flag spoofed: no tunnel at
+  load, the build waits until after a button's glide lands; glide checks
+  (momentum, reader, steady, rest, cold early) and flow_check all pass.
+
+- ✅ **A heavier wheel, a financial chart key, a steadier device probe
+  (2026-11-04)**. John: "I want the scrolling to feel heavier ... like a boat
+  being tugged"; the cone's key said "Air speed, x inflow", which means nothing
+  next to trading data. (His missing motion was Windows' Animation effects
+  setting off: the site honours prefers-reduced-motion.)
+  - `static/reveal.js`: the wheel moves an aim and the page follows it on a
+    critically damped tow line (`TOW = 4.6` rad/s on the frame clock): it
+    gathers way instead of jumping (10% in 100 ms vs 33 ms, half in 350 ms vs
+    133), keeps its momentum through the next notch and settles without
+    overshoot (~1.3 s). Its stand-aside check for a button's glide read
+    `window.__melionaStop`, but main.py's glide keeps that on the document:
+    it never stood aside, and the longer momentum dragged a glide short (glide
+    check momentum/rest). Fixed (`gliding()`), test pinned.
+  - main.py `flow_key_html` (removed with the cone's flow in ME-28): Grid (trading days x cumulative return), Flow
+    speed (1.0 = the stream at full strength), Stream strength (follows how
+    fast the 5-95% outcome range widens each trading day; full on the day it
+    widens fastest), Pressure on a path (Cp, pressure coefficient; red on the
+    cone's steepest stretches). The caption keeps "not a market quantity".
+  - `tools/device_check.mjs`: measures the landed page (`landed()`: land,
+    two frames, repeat until nothing is left to land; `covered()` lands a
+    block that starts arriving as it scrolls in). Live audit on 05ff4dd had
+    measured an iPad Pro's drawer mid-slide over the tab strip.
+
+- ✅ **The Grit Zone, traced on live data (2026-11-04)**. John: "all the
+  descriptions about the grit zone consistency resilience and recovery ...
+  accurate and traced from a data source". Every other number already had a
+  live re-derivation; the Grit Zone only had synthetic unit tests.
+  `tests/batch_audit.audit_grit` now runs on every preset's full-history
+  closes in the Live audit (step 3): GRIT-01 consistency (vectorised 1-year
+  holding periods), GRIT-02 recovery (drawdown episodes re-found as
+  high-water-mark spells), GRIT-03 crisis resilience (numpy windows over
+  HISTORICAL_REGIMES, the 2-year reclaim), GRIT-04 the peer-rank scores and
+  the stated blend (scipy ranks), GRIT-05 exactly the short histories
+  excluded. A planted error in each part fails its check
+  (`test_the_batch_audit_re_derives_every_grit_zone_number`).
+
+- ✅ **John's story: why Meliona exists (2026-11-05)**. John: "a story
+  place where we explain why we wanted to create this", near LinkedIn and
+  the contact form, with a second photo of him "when I'm not in my suit". A
+  new section between About the builder and the questions (`hero.story_html`,
+  `#story`): "Why I built this / Built for a question too many investors
+  share" - it starts with his dad's search for a stock to rely on for years
+  (John: mention his dad lightly, then speak to everyone with that problem),
+  grit (the stocks that are
+  not the best every year but get back up after every fall: the Grit Zone),
+  the linkage of a gritty anchor and an AI high-flyer at the same share of
+  risk, a flyer replaced by the one that works best with the anchor when
+  tested together, and the close: built for people like his dad - with one pulled line ("Not the best
+  every year. Back up after every fall.") and his signature. The photo is a
+  4:5 crop of his selfie, one global grade, no EXIF (`tools/portrait.py
+  --story`). Paper ground, a charcoal cap over the photo, Georgia for the
+  words; the pulled line is a `<p>`, since Streamlit greys a blockquote.
+  The test holds the story to the engine: no advice, no guarantee
+  (`test_johns_story_sits_beside_his_out_of_suit_photo_above_the_contact`).
+
+- ✅ **The engine's controls in plain words (2026-11-05)**. John: "simpler
+  and easy for a user with limited technical skills". Each control a visitor
+  sets now reads plain words first, the method's name in brackets: "How the
+  names move together" (Steady - Ledoit-Wolf / Plain history / Quick to react
+  - EWMA), "Equal risk (risk parity)", "Aim for a set level of yearly
+  swings", "How bad years are simulated" (Real past days - bootstrap / Real
+  days plus sudden jumps - Merton), "My own shock", "Market fall over the
+  year (%)", "Extra turbulence (%)"; the estimator's caption says in a line
+  what it does before naming the method. Only the visible words changed: the
+  values behind each choice are the same, and the Options audit, deep scan,
+  recruiter walk and tests find the controls by their new names
+  (`test_the_engines_controls_speak_plain_words_first`).
+
+- ✅ **Nothing freezes when a drawer opens; drawers and tabs stand out
+  (2026-11-05)**. John's iPhone screenshots: the Weights and Stress test
+  drawers, the Book's drawer and the contact form showed blocks frozen
+  part-way through their arrival - squeezed, sideways, cut off at the edge -
+  and a drawer header frozen as a sliver. Chromium never froze (no WebKit
+  here to run), so the fix removes the conditions: what a reader opens (a
+  drawer's body, a tab's panel) is never tagged for an arrival, and WebKit
+  and touch screens get flat slides and rises with no perspective turn.
+  device_check now fails on a tagged block inside opened content and on two
+  elements sharing an id - the Contact heading had Streamlit's automatic
+  anchor "contact" beside the section's own (now a heading by role). Drawers:
+  John turned down a stone plaque and a beige plaque ("the old designs were
+  good but bold the words ... keeping the same elements, uplift this"), so
+  they keep the hairline box with bold serif labels; a partial rule on the
+  top edge read as "tacky", so the uplift is corporate instead: the chevron
+  on the right edge in text bronze, room in the header, the frame charcoal on
+  hover and when open. Tabs keep their label voice. The contact section lists
+  both addresses, each with its job. John's bio now reads Computer Information Systems,
+  specializing in AI & Analytics; the contact form writes to his own Gmail
+  (his choice) with LinkedIn as the second way to reach him.
+
+- ✅ **An early button press is never lost (2026-11-05)**. The Live audit
+  (step 8c, early) saw "Skip to the analysis" pressed while the page was still
+  loading move 5px and stop 2443px short, three times. Two causes, both in the
+  glide script's wait for a section not written yet: (1) scroll anchoring under
+  a page still growing moved scrollTop and was read as the reader scrolling -
+  now a scroll that leaves the pressed button where it was on screen is layout,
+  not the reader, and a clamp under a shrinking page rebases that position;
+  (2) the wait's timers lived in the glide frame, and a run that replaced the
+  frame took them with it - the wait now lives on the page
+  (`P.__melionaPending`, wall-clock press time) and the next frame carries it
+  on. A fourth failure (after both fixes) found the root: the skip link is
+  drawn ~230ms before the glide frame loads, so a quick press fell to the
+  browser's own jump to a section not yet written. static/reveal.js, in the
+  <head>, now keeps such a press as the same pending record and the glide
+  flies it on arrival (probe: old script dead, section 2213px away; new one
+  lands at 27px). Browser probes reproduce each cause on the old script and land on the new one;
+  a reader's own scroll still ends the wait
+  (`test_the_glide_follows_a_moving_target_and_yields_to_the_reader`).
+
+- ✅ **Story cut (ME-28, John 2026-11-05)**. The page tells one story: how
+  much this book could lose in a bad year, what real crashes did, which names
+  hold up (grit), and how steady anchors cushion high-flyers. Off that story,
+  and removed from the page with the code, tests and probes that existed only
+  for them: the cone's lattice Boltzmann flow (`static/windtunnel.js`, the
+  flow key, the Verification Overlay, `tools/flow_check.mjs` and Live audit
+  step 8d, deep_scan's `windAgrees`) - the entries above are history; the
+  Liquidity, Correlation Watch and Balance tabs; the AI-capex recovery race
+  (its tab panel and the fourth landing box; the page no longer pulls the
+  basket); and Risk Breakdown's correlation matrix, outcome histogram and
+  "Model validation & factor structure" drawer (VaR backtest, EVT tail,
+  factor exposures, eigen factors). The strip is now Risk Topology, Risk
+  Breakdown, Grit Zone, Crisis Conviction. The Book keeps its own size and
+  participation, the headline keeps its liquidity-adjusted tail, and the
+  libraries (`src/liquidity.py`, `src/comovement.py`, `src/hedge.py`,
+  `src/factors.py`, `src/eigenrisk.py`, `recovery_race`) stay for the audits.
+
+- ✅ **The close (ME-28 part 4, John 2026-11-05)**. About the builder: John's
+  portrait (`tools/portrait.py`: 4:5 crop, one global warm grade, AVIF/WebP/
+  JPEG at 480x600) on a stone block with his LinkedIn, GitHub and Handshake
+  links (monochrome marks, new tab, `noopener noreferrer me`), also in the
+  footer. "Contact John" beside the hero's button glides to a contact form
+  that, with no mail server, prepares a `mailto:` email in the visitor's own
+  app and shows a thank-you state (response time: 2 business days;
+  `public/thanks.html` to keep); nothing is sent, logged or stored. Crisis
+  Conviction gained three case studies read from the live crisis table
+  (`crisis_forward_returns` now returns the days back to the old peak). Five
+  plain questions on the page, served with Person and WebApplication as
+  JSON-LD; the meta description no longer names factor exposures. Buttons
+  had spoken Source Serif (Streamlit's markdown rule beat `font: inherit`):
+  fixed for every button. LAUNCH_CHECKLIST #170-#186 (map and directions,
+  reviews: N/A). Tests: the contact form, the thank-you page, the schema and
+  FAQ, the builder block, the case studies.

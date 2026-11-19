@@ -80,6 +80,11 @@ sweep of recent failures with no specific reference:
 Logs rotate at 1 MB x 3 files and hold tickers and stack traces - no personal
 data, which is what lets the privacy note say what it says.
 
+Usage: search Railway's log view (service -> Logs) for `meliona.usage`. One
+line an hour, e.g. `usage 2026-11-04: 37 sessions; presets: Mag-7 21, ...`; a
+day's last line (written at the first visit after midnight UTC, or at shutdown)
+is its total, and the counts restart at zero on every redeploy.
+
 ## 4. Spend and rate-limit control
 
 The engine calls no metered API and no LLM, so there is no credit balance to
@@ -120,6 +125,14 @@ lands:
 simultaneous first-time visitors see the headline within ~21s, 25 within ~53s,
 no errors, peak memory ~720 MB. Re-measure on Railway before quoting it as the
 live site's number. Report: `audit/stress_2026-10-15T020905Z.md`.
+
+**Repeatable since 2026-11-04:** `node tools/load_check.mjs <url> 10 240` opens
+ten visitors at once and fails on any error, refusal or missing headline; the
+Live audit runs it on every push (step 8e), then restores a fresh checkout
+with an empty cache and times it to its first headline. `serve.py` also caps
+each network address (60 new sessions a minute, 30 open, 3,000 requests a
+minute; health checks exempt), and the `Uptime` workflow checks the live site
+every 15 minutes.
 
 ### Reverse proxy / CDN (Cloudflare): decided against, 2026-10-15
 
@@ -213,8 +226,11 @@ five-minute reviewer path:
    the verdict change; excluded assets are named, not hidden.
 4. Open **Risk Topology** - the Monte Carlo drawn as a map, with the state
    model and its measured widening factor disclosed in the footnote.
-5. Open **Lineage & Audit** for provenance, the run's audit trail, and the
-   privacy panel with the session-clear control.
+5. Open **Crisis Conviction** for the three case studies, then **Where the
+   numbers come from** -> **Lineage & Audit** for provenance, the run's audit
+   trail, and the privacy panel with the session-clear control.
+6. Scroll to **About the builder** and **Contact**: the profile links open in
+   a new tab, and the form prepares an email without sending anything.
 
 ## 6b. Support mailbox setup (do this before the link is public)
 
@@ -352,20 +368,17 @@ is a separate container with its own disk, so it would warm a cache the web
 app never reads. Its passes print to the deploy log, one line per preset.
 
 A pass warms every pull the page makes for a preset, not only its 2y prices:
-the full histories behind The Book and the Grit tab, the 10 years behind the
-tail fit, the anchor pool, and the page-wide pulls
-(benchmark, recovery race, factor proxies, defensive shelf, T-bill). After a
+the full histories behind The Book and the Grit tab, the anchor pool, and the
+page-wide pulls (benchmark, defensive shelf, T-bill). After a
 deploy the first switch to Semiconductors took 93.1s with only the 2y pull
 warm (John, 2026-10-20); offline, warming everything took that switch from
 40.9s to 12.8s, the headline from 4.1s to 1.0s.
 `test_the_warm_pass_covers_every_fetch_a_preset_page_makes` records the real
-page's fetches and fails if a pass misses one - the Balance tab's default
-crisis pair included, picked by the page's own rule (most volatile name, top
-of `anchor_rank`). Each name's download is kept on its own per period
+page's fetches and fails if a pass misses one. Each name's download is kept on its own per period
 (`ingestion._raw_path`), so presets that share names share the work and a
 basket a visitor types downloads only the names the server does not hold yet
-- the rest of it is stitched from what the pass left. A pass makes about 450
-name-downloads (152 names at 2y, 149 at max, 148 at 10y) plus the security
+- the rest of it is stitched from what the pass left. A pass makes about 300
+name-downloads (152 names at 2y, 149 at max) plus the security
 master's lookups when they are due, down from about 820 requests when each
 basket was downloaded whole; the warmer is its own process with its own
 5000-a-day netguard cap, and it pauses 1s between pulls. The cache holds up to

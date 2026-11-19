@@ -7,10 +7,12 @@ search crawlers do not run JavaScript, so anything the app sets at runtime is
 invisible to them. This step, run once at container start (Procfile), does two
 things to Streamlit's static root:
 
-1. copies `public/` - favicon, apple-touch icon, Open Graph image - and writes
+1. copies `public/` - the icon set, web app manifest, Open Graph image - and writes
    robots.txt and sitemap.xml for the deployed URL;
-2. adds a title, meta description, canonical URL, Open Graph / Twitter tags and
-   a <noscript> description to index.html's <head>, once (idempotent);
+2. adds a title, meta description, canonical URL, Open Graph / Twitter tags,
+   the JSON-LD a search engine reads (the Person who built it, the app, the
+   five questions) and a <noscript> description to index.html's <head>, once
+   (idempotent);
 3. paints the hero's boot skeleton straight from index.html (with app.css
    linked in the head), so a visitor sees the page's shape from the first
    frame, before Streamlit's JavaScript has started.
@@ -22,20 +24,25 @@ runs exactly as before.
 """
 
 import datetime
+import hashlib
 import html
+import json
 import os
 import pathlib
 import shutil
 import sys
 
-# MELEONA_SITE_URL is the name's spelling before 2026-10-28; a host variable
-# set under it still counts.
-SITE_URL = (os.environ.get("MELIONA_SITE_URL") or os.environ.get("MELEONA_SITE_URL") or
-    "https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app"
-).rstrip("/")
+from src.observability import host_setting
+
+# MELIONA_SITE_URL (or its pre-2026-10-28 spelling MELEONA_) overrides it; a
+# value that is not an https URL is ignored, so it can't add robots.txt rules.
+LIVE_URL = "https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app"
+SITE_URL = host_setting("SITE_URL", LIVE_URL).rstrip("/")
 TITLE = "Meliona · Portfolio Risk Engine"
-DESCRIPTION = ("VaR, CVaR, Monte Carlo stress testing and factor exposures, computed "
-               "live from Yahoo Finance data. Every number traces back to its source.")
+# What the page does today (ME-28 part 4: "factor exposures" left the page
+# with the 2026-10-29 cuts, so the description no longer names them).
+DESCRIPTION = ("How much could a portfolio lose in a bad year? VaR, CVaR, Monte Carlo and "
+               "real crises replayed on live Yahoo Finance data. Every number traces to its source.")
 MARK, END = "<!-- meliona-head -->", "<!-- /meliona-head -->"
 BOOT_MARK, BOOT_END = "<!-- meliona-boot -->", "<!-- /meliona-boot -->"
 # The commit this process was built from. Railway sets RAILWAY_GIT_COMMIT_SHA
@@ -79,6 +86,61 @@ def boot_block() -> str:
     return f"{BOOT_MARK}\n{fallback}{skel}\n{BOOT_END}\n"
 
 
+# Streamlit's own index.html links its favicon as "shortcut icon" at a fixed
+# address. A browser keeps a tab icon for months by its address, so visitors
+# who came before the crest kept seeing the old lion (John, 2026-11-05). The
+# line is removed; the icons below are linked with their own content hash
+# (v=), so a new icon is a new address and every browser fetches it at once.
+STREAMLIT_ICON = '<link rel="shortcut icon" href="./favicon.png" />'
+
+
+def versioned(name: str) -> str:
+    """/<name>?v=<first 10 hex of the file's sha256>: changes when the file does."""
+    digest = hashlib.sha256((PUBLIC / name).read_bytes()).hexdigest()[:10]
+    return f"/{name}?v={digest}"
+
+
+def icon_tags() -> str:
+    """The tab, home-screen and install icons (all rendered by tools/brand_icons.mjs)."""
+    return (
+        f'<link rel="icon" href="{versioned("favicon.ico")}" sizes="16x16 32x32 48x48">\n'
+        f'<link rel="icon" type="image/svg+xml" href="{versioned("favicon.svg")}">\n'
+        f'<link rel="icon" type="image/png" sizes="96x96" href="{versioned("favicon.png")}">\n'
+        f'<link rel="apple-touch-icon" sizes="180x180" href="{versioned("apple-touch-icon.png")}">\n'
+        f'<link rel="manifest" href="{versioned("site.webmanifest")}">\n'
+    )
+
+
+def schema_json(site_url: str) -> str:
+    """The page as structured data (schema.org JSON-LD): the Person who built
+    it, the web app, and the five questions. Read from hero.py, the same
+    source the page renders, so the schema can never say what the page does
+    not. Every "<" is written as \\u003c - JSON-equal, and nothing in the data
+    can close the <script> block it sits in or open a comment there."""
+    import hero
+    person = f"{site_url}/#john-nguyen"
+    graph = [
+        {"@type": "Person", "@id": person, "name": hero.PERSON_NAME,
+         "jobTitle": hero.PERSON_ROLE, "description": hero.ABOUT_BIO,
+         "image": f"{site_url}/app/static/{hero.PORTRAIT}.jpg", "url": f"{site_url}/#about",
+         "sameAs": [url for _, url, _ in hero.PROFILE_LINKS]},
+        {"@type": "WebApplication", "@id": f"{site_url}/#app", "name": "Meliona",
+         "alternateName": TITLE, "url": f"{site_url}/", "description": DESCRIPTION,
+         "applicationCategory": "FinanceApplication", "operatingSystem": "Any",
+         "isAccessibleForFree": True, "image": f"{site_url}/og-image.png",
+         "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+         "author": {"@id": person}, "sameAs": [hero.REPO_URL],
+         "isBasedOn": {"@type": "SoftwareSourceCode", "codeRepository": hero.REPO_URL,
+                       "programmingLanguage": "Python", "author": {"@id": person}}},
+        {"@type": "FAQPage", "@id": f"{site_url}/#faq",
+         "mainEntity": [{"@type": "Question", "name": q,
+                         "acceptedAnswer": {"@type": "Answer", "text": a}}
+                        for q, a in hero.FAQS]},
+    ]
+    text = json.dumps({"@context": "https://schema.org", "@graph": graph}, ensure_ascii=False)
+    return text.replace("<", "\\u003c")
+
+
 def head_tags(site_url: str, build: str = "") -> str:
     t, d, u = html.escape(TITLE), html.escape(DESCRIPTION), html.escape(site_url)
     b = html.escape(build[:12] or "unknown")
@@ -97,8 +159,7 @@ def head_tags(site_url: str, build: str = "") -> str:
         f'<meta name="meliona-build" content="{b}">\n'
         f'<meta name="description" content="{d}">\n'
         f'<link rel="canonical" href="{u}/">\n'
-        f'<link rel="icon" type="image/png" href="/favicon.png">\n'
-        f'<link rel="apple-touch-icon" href="/apple-touch-icon.png">\n'
+        f'{icon_tags()}'
         f'<meta name="theme-color" content="#EDE9E3">\n'
         # The boot skeleton below the <body> tag is styled by this sheet, so it
         # must be in place for the first paint (served by enableStaticServing).
@@ -111,9 +172,11 @@ def head_tags(site_url: str, build: str = "") -> str:
         f'<meta property="og:image:width" content="1200">\n'
         f'<meta property="og:image:height" content="627">\n'
         f'<meta property="og:image:alt" content="The Meliona crest and name beside '
-        f'its live audit of 15 October 2026: 727 of 728 checks passed on Yahoo '
-        f'Finance data">\n'
+        f'its live audit on Yahoo Finance data: 0 of 832 checks failed">\n'
         f'<meta name="twitter:card" content="summary_large_image">\n'
+        # Structured data: a data block, never run - the meta CSP above sets no
+        # script policy, and application/ld+json is not executed in any case.
+        f'<script type="application/ld+json">{schema_json(site_url)}</script>\n'
         # Single-page app: every unknown path is served this same index.html,
         # whose relative script paths break below the root - a mistyped
         # /a/b link was a blank white page. Send it to the branded 404 instead.
@@ -131,6 +194,9 @@ def head_tags(site_url: str, build: str = "") -> str:
         "function(){if(!window.__melionaReveal)h.classList.remove('reveal-on')})"
         "})(document.documentElement)</script>\n"
         '<script id="meliona-reveal" defer src="./app/static/reveal.js"></script>\n'
+        # reveal.js loads dock.js (the phone shortcut, the cookie and offline
+        # notices) after it runs; fetching it with the page saves that round trip
+        '<link rel="preload" as="script" href="./app/static/dock.js">\n'
         f"{END}\n"
     )
 
@@ -164,6 +230,11 @@ def install(static_dir: pathlib.Path, site_url: str = SITE_URL,
         new = new.replace(
             "<noscript>", f"<noscript><p>{html.escape(TITLE)}. {html.escape(DESCRIPTION)}</p>", 1)
         new = new.replace("<body>", "<body>\n" + boot_block(), 1)
+    new = new.replace(STREAMLIT_ICON + "\n", "").replace(STREAMLIT_ICON, "")
+    # Safe area (2026-11-09): the page is laid out under a phone's notch and
+    # home bar too, and static/app.css pads it with env(safe-area-inset-*).
+    if "viewport-fit=cover" not in new:
+        new = new.replace('shrink-to-fit=no"', 'shrink-to-fit=no, viewport-fit=cover"', 1)
     if BOOT_MARK in new:                   # the skeleton follows the hero's copy
         i, j = new.index(BOOT_MARK), new.index(BOOT_END) + len(BOOT_END) + 1
         new = new[:i] + boot_block() + new[j:]
