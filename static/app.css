@@ -204,7 +204,7 @@ html { scroll-behavior: smooth; }
   color: #6A5030; }
 .gplaque-term .c { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 700;
   font-size: 0.75rem; letter-spacing: .2em; text-transform: uppercase; color: #6A5030; }
-.gplaque-read { font-family: Georgia, serif; font-size: 1rem; color: #4A4640;
+.gplaque-read { font-family: Georgia, serif; font-size: 1rem; color: #4A4640; text-wrap: pretty;
   line-height: 1.6; max-width: 480px; padding-top: 16px; }
 
 /* HERO - the share banner, as a page: flat paper on the left carrying the
@@ -320,7 +320,7 @@ html { scroll-behavior: smooth; }
 .pillar-label { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 700;
     font-size: 0.75rem; letter-spacing: .2em; text-transform: uppercase; color: #6A5030;
     margin-bottom: 10px; }
-.pillar-desc { font-size: 0.9375rem; color: #4A4640; line-height: 1.55; }
+.pillar-desc { font-size: 0.9375rem; color: #4A4640; line-height: 1.55; text-wrap: pretty; }
 
 /* Tables: a receipt - the 3px rule over a hairline frame */
 [data-testid="stDataFrame"] { border: 1px solid #C4BDAE;
@@ -343,7 +343,15 @@ html { scroll-behavior: smooth; }
 /* one line a label: on a phone the tabs shrank to fit, broke "TOPOLOGY" into
    "TOPOLOG / Y" and clipped the top line (2026-11-19); a tab keeps its width
    and the strip scrolls sideways instead, with its labelled arrow */
-[data-testid="stTab"] { flex-shrink: 0; }
+[data-testid="stTab"] { flex-shrink: 0; scroll-snap-align: start; }
+/* scrolled, the strip rests on a whole label clear of the 44px arrow, never
+   "‹ REAKDOWN" (2026-11-19) */
+[data-testid="stTabs"] [role="tablist"] { scroll-snap-type: x mandatory; scroll-padding-inline: 48px; }
+/* on a phone the strip is only a little wider than the screen, so its end
+   was a resting place with no label on it: room after the last tab lets
+   every stop put a whole label 48px in from the left */
+@media (max-width: 640px) {
+  [data-testid="stTabs"] [role="tablist"] { padding-inline-end: calc(100% - 200px); } }
 /* its arrows: flat paper over the labels they cover, not Streamlit's darker
    gradient fade (flat colour, no decorative gradients) */
 [data-testid="stTabsScrollRight"], [data-testid="stTabsScrollLeft"] {
@@ -409,7 +417,7 @@ html { scroll-behavior: smooth; }
 .book-text { font-family: Georgia, serif; font-size: 0.9375rem; line-height: 1.6; color: #3F3B35; }
 /* the row's figures beside its sentence (a card's stat column): the ticker,
    its share with a hairline bar to scale, its grit and its partner */
-.book-row:has(.book-figs) { grid-template-columns: 112px minmax(0, 1fr) 176px; }
+.book-row:has(.book-figs) { grid-template-columns: 112px minmax(0, 68ch) 176px; }
 .book-figs { display: flex; flex-direction: column; gap: 3px; padding: 2px 0 0 16px;
     border-left: 1px solid rgba(63,59,53,.18); font-family: Georgia, serif;
     font-size: 0.8125rem; line-height: 1.45; color: #5D574D; }
@@ -1059,7 +1067,7 @@ div[data-baseweb="select"] > div:hover { border-color: #9A7B4F !important; }
 .meliona-footer .f-box:hover { color: #C6A26B !important; }
 .meliona-footer .f-box small { font-weight: 400; }
 @media (max-width: 640px) { .meliona-footer .f-box { grid-template-columns: 1fr; } }
-.meliona-footer .f-box small { display: block; color: #B4AB9B;
+.meliona-footer .f-box small { display: block; color: #B4AB9B; text-wrap: pretty;
     font-family: Georgia, serif; font-size: 0.8125rem; line-height: 1.5; }
 .meliona-footer .f-bar { border-top: 1px solid rgba(196,189,174,.28);
     padding-top: 18px; display: flex; justify-content: space-between;
@@ -1092,11 +1100,14 @@ div[data-baseweb="select"] > div:hover { border-color: #9A7B4F !important; }
     border-bottom: 1px solid rgba(63,59,53,.28); }
 .orient-l { margin: 0; padding: 0; list-style: none; counter-reset: orient;
     font-family: Georgia, serif; font-size: 1rem; line-height: 1.6; color: #4A4640; }
-.orient-l li { counter-increment: orient; display: grid; grid-template-columns: 44px minmax(0, 1fr);
+/* the row's rule spans the receipt like its top rule; the words stop at 68ch
+   (outranks the CRAFT measure on li, which cut the rules at ~600px) */
+[data-testid="stMain"] .orient .orient-l li { max-width: none; }
+.orient-l li { counter-increment: orient; display: grid; grid-template-columns: 44px minmax(0, 68ch);
     margin: 0; padding: 13px 0 12px; border-bottom: 1px solid rgba(63,59,53,.18); }
 .orient-l li::before { content: counter(orient); font-weight: 700; color: #6A5030; }
 .orient-l b { color: #3F3B35; }
-.orient-f { margin-top: 0; padding-top: 12px;
+.orient-f { margin-top: 0; padding-top: 12px; max-width: 68ch; text-wrap: pretty;
     font-family: Georgia, serif; font-size: 0.875rem; color: #5D574D; }
 
 /* --- GUIDED DESCENT ------------------------------------------------------
@@ -1328,6 +1339,8 @@ a.pmark:focus-visible, .meliona-footer a.f-mark:focus-visible, .thanks-row a:foc
    words on fewer lines, so the block gets shorter; the sketch comes down to
    match, and the CTA underneath rises into view. */
 .st-key-gungnir_zone .gungnir-plaque { max-width: 100% !important; }
+/* stacked on a phone, the column gap already parts the sketch and the plaque */
+@media (max-width: 640px) { .st-key-gungnir_zone .gungnir-plaque { margin-top: 0; } }
 
 @media (max-height: 1000px) {
   /* the sketch is the tallest thing in the row, and mostly air around the

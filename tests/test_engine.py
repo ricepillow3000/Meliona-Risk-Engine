@@ -7751,6 +7751,29 @@ def test_a_chart_in_a_tab_is_drawn_at_its_boxs_width():
     assert "chart drawn at its box's width" in probe
 
 
+def test_the_second_first_visitor_review_of_2026_11_19_holds():
+    """A second fresh read, after the first round's fixes (2026-11-19):
+    - with the tab strip scrolling on a phone, a press on its arrow rested
+      with "Risk Breakdown" half under the left arrow ("‹ REAKDOWN"): tabs
+      snap 48px clear of it, and the strip has room past its last tab so
+      every stop can;
+    - the Grit pillars, the Slice's plaque and the footer index ended on one
+      word alone (blocks the craft check's prose measure does not reach);
+    - the how-to receipt's row rules stopped at ~600px under a full-width top
+      rule, and its closing sentence ran ~1000px;
+    - the Book's figure column stood ~500px away from its sentence."""
+    import re
+    css = (pathlib.Path(__file__).resolve().parent.parent / "static" / "app.css").read_text(encoding="utf-8")
+    assert re.search(r'\[role="tablist"\] \{ scroll-snap-type: x mandatory; scroll-padding-inline: 48px; \}', css)
+    assert "scroll-snap-align: start" in re.search(r'\[data-testid="stTab"\] \{([^}]*)\}', css).group(1)
+    assert re.search(r'@media \(max-width: 640px\) \{\s*\[data-testid="stTabs"\] \[role="tablist"\] \{ padding-inline-end:', css)
+    for sel in (r"\.pillar-desc \{", r"\.gplaque-read \{", r"\.meliona-footer \.f-box small \{ display: block;", r"\.orient-f \{"):
+        assert re.search(sel + r"[^}]*text-wrap: pretty", css), sel
+    assert '[data-testid="stMain"] .orient .orient-l li { max-width: none; }' in css
+    assert re.search(r"\.orient-f \{[^}]*max-width: 68ch", css)
+    assert ".book-row:has(.book-figs) { grid-template-columns: 112px minmax(0, 68ch) 176px; }" in css
+
+
 def test_every_caption_says_its_one_thing_in_45_words_offline():
     """craft_check's bloat rule (John, 2026-11-12: 45 words or fewer), run on
     the offline page so it fails before a push, not in the Live audit: the

@@ -988,7 +988,7 @@ st.markdown("""
       <div class="pillar-card">
         <div class="pillar-label">Consistency</div>
         <div class="pillar-desc">How often a year of holding it ended in a
-          gain, counted over every one-year stretch.</div>
+          gain, counted over every one-year&nbsp;stretch.</div>
       </div>
       <div class="pillar-card">
         <div class="pillar-label">Resilience</div>
