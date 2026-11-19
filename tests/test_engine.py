@@ -7030,7 +7030,12 @@ def test_the_phone_shortcut_flies_to_the_engine_and_never_covers_it():
         assert own not in js, f"dock.js scrolls the page itself ({own}): the glide is the one routine"
     # shown between the hero's button and the engine, by observers
     assert "new IntersectionObserver" in js and "'#hero .cta-btn'" in js
-    assert "heroGone && engineAhead" in js and "r.bottom <= 0" in js and "r.top >= vh" in js
+    assert "heroGone && engineAhead" in js and "bottom <= 0" in js
+    # a jump past the small engine heading must still take the bar away
+    # (2026-11-19): the engine's observer counts everything above the screen's
+    # bottom edge as in, on the page's own scroller, so any crossing flips it
+    assert "rootMargin: ALL_ABOVE" in js and "engineAhead = !e.isIntersecting" in js
+    assert "root: sc" in js and "'[data-testid=\"stMain\"]'" in js
     assert "(max-width: 640px)" in js, "the bar is for phones only"
     # outside Streamlit's tree: nothing main.py writes, and not a block reveal.js hides
     assert "m-dock" not in main and "m-stack" not in main
@@ -7685,6 +7690,126 @@ def test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares():
     assert fig.layout.height == max(200, 30 * 4 + 80)
     block = text[text.index('panel_head("Risk by name"'):text.index('panel_head("Return for the risk taken"')]
     assert 'barmode="group"' not in block, "Risk by name is still grouped bars"
+
+
+def test_the_slices_button_comes_after_its_sketch_and_its_plaque():
+    """2026-11-19, first-visitor review: on a phone the two columns stack, and
+    "To the engine" sat between the sketch and the plaque, so the equation
+    read as an afterthought below the button. The button now follows both
+    columns, so every width reads sketch, equation, then the way on."""
+    at, restore = _offline_app()
+    try:
+        md = [m.value for m in at.markdown]
+    finally:
+        restore()
+    sketch = next(i for i, v in enumerate(md) if '<svg viewBox="0 0 360 200"' in v)
+    plaque = next(i for i, v in enumerate(md) if 'class="gungnir-plaque"' in v)
+    go_on = [i for i, v in enumerate(md) if 'href="#engine" class="cta-btn"' in v]
+    assert len(go_on) == 1, "one way on from the Slice"
+    assert sketch < plaque < go_on[0], (sketch, plaque, go_on)
+    assert 'class="cta-btn"' not in md[sketch], "the button rides inside the sketch's column"
+
+
+def test_the_first_visitor_review_of_2026_11_19_holds():
+    """Four things a fresh read of the page found (2026-11-19):
+    - "Three crashes, and the way back" was typed in; a record that covers two
+      showed two under it. The heading counts the case studies it shows.
+    - the method line said the bootstrap was "redrawing real days at random"
+      while the cone said "runs of real days": one engine, two stories.
+    - the story photo's caption was italic ("No italics in the copy").
+    - a date broke across lines ("on 1 / January 2021"): a figure never wraps.
+    - the read-out under the Grit chart ran ~170 characters a line (68ch).
+    - the footer's small print was sans-serif, and its index closed on two
+      hairlines with an empty band between.
+    - the data's age read "26d old": units are spelled out.
+    - the Book gave V 7.0% while Risk by name showed every name at 8.3%: the
+      Book now says its shares are its own split, not the Weights choice.
+    - the side picker sat in a centred middle column, 320px right of the
+      heading above it."""
+    import ast
+    import re
+    _, tree = _main_source_and_tree()
+    root = pathlib.Path(__file__).resolve().parent.parent
+    main = (root / "main.py").read_text(encoding="utf-8")
+    assert '"Three crashes, and the way back"' not in main, "the case count is typed in"
+    words = _exec_nodes([_lift_assign(tree, "_CASE_COUNT")], {})["_CASE_COUNT"]
+    assert words[2] == "Two crashes" and words[3] == "Three crashes" and words[1] == "One crash"
+    node = _lift_assign(tree, "engine_txt")
+    blk = _exec_nodes([node], {"use_jd": False, "mc": {"block_days": 4}})["engine_txt"]
+    iid = _exec_nodes([node], {"use_jd": False, "mc": {"block_days": 1}})["engine_txt"]
+    assert "runs of real days" in blk and "4 days long on average" in blk, blk
+    assert "one real day at a time" in iid and "runs" not in iid, iid
+    css = (root / "static" / "app.css").read_text(encoding="utf-8")
+    assert "font-style: italic" not in css, "italic type in the stylesheet"
+    # an outside anchor's own sentence already says it is from outside your
+    # list; a second "· from outside your list" tag after it said it twice
+    assert 'book-flag">from outside your' not in main, "the outside tag repeats the sentence"
+    fresh = _exec_nodes([_lift_assign(tree, "fresh")], {"health": {"staleness_days": 3}})["fresh"]
+    assert fresh == "3\u00a0days old", fresh
+    assert "st.columns([1.2, 2.6, 1.2])" not in main, "the side picker is centred off the page's left edge"
+    # the tab strip scrolls now, so its arrows show: in Streamlit's own place
+    # (never position: relative), a real 44px box on touch, flat paper
+    assert not re.search(r'stTabsScrollRight"\][^{]*\{\s*position: relative', css)
+    assert re.search(r'stTabsScrollLeft"\] \{\s*min-width: 44px; min-height: 44px', css)
+    assert re.search(r'stTabsScrollLeft"\] \{\s*background: #EDE9E3 !important', css)
+    assert "Weighting:\\u00a0{alloc_label}" in main, "the method line can end on a lone word"
+    assert "are the Book's own split" in main, "the Book's shares and the headline's weights are not told apart"
+    bar = re.search(r"\.meliona-footer \.f-bar \{([^}]*)\}", css).group(1)
+    assert "font-family: Georgia" in bar, "the footer's small print is not in Georgia"
+    assert ".f-rail a.f-box:last-of-type { border-bottom: 0; }" in css, "two hairlines close the footer index"
+    readme = re.search(r"\.read-me \{([^}]*)\}", css).group(1)
+    assert "calc(100% - 68ch)" in readme, "the chart read-out runs past 68ch"
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_long_date")
+    long_date = _exec_nodes([fn], {})["_long_date"]
+    assert long_date(pd.Timestamp("2021-01-01")) == "1 January 2021"
+
+
+def test_a_chart_in_a_tab_is_drawn_at_its_boxs_width():
+    """2026-11-19: every chart in a tab (Risk by name, the Grit bars and parts)
+    was drawn at Plotly's 700px fallback: half a desktop column, and on a
+    phone twice the screen, clipped. Plotly measures a hidden tab as 0 wide,
+    and the layout transition _style_fig set eased the later update in a way
+    that moved the width it reported but never redrew the frame. The shared
+    style sets no transition; site_check opens each tab on a phone and
+    measures the drawn width against the box."""
+    import ast
+    import plotly.graph_objects as go
+    _, tree = _main_source_and_tree()
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_style_fig")
+    consts = [n for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+              and all(isinstance(t, ast.Name) and t.id.isupper() for t in n.targets)]
+    style = _exec_nodes(consts + [fn], {"go": go})["_style_fig"]
+    fig = style(go.Figure(go.Bar(x=[1], y=["A"], orientation="h")))
+    assert fig.layout.transition.duration is None, "a layout transition is back on the shared chart style"
+    probe = (pathlib.Path(__file__).resolve().parent.parent / "tools" / "site_check.mjs").read_text(encoding="utf-8")
+    assert "chart drawn at its box's width" in probe
+
+
+def test_the_second_first_visitor_review_of_2026_11_19_holds():
+    """A second fresh read, after the first round's fixes (2026-11-19):
+    - with the tab strip scrolling on a phone, a press on its arrow rested
+      with "Risk Breakdown" half under the left arrow ("‹ REAKDOWN"): tabs
+      snap 48px clear of it, and the strip has room past its last tab so
+      every stop can;
+    - the Grit pillars, the Slice's plaque and the footer index ended on one
+      word alone (blocks the craft check's prose measure does not reach);
+    - the how-to receipt's row rules stopped at ~600px under a full-width top
+      rule, and its closing sentence ran ~1000px;
+    - the Book's figure column stood ~500px away from its sentence."""
+    import re
+    css = (pathlib.Path(__file__).resolve().parent.parent / "static" / "app.css").read_text(encoding="utf-8")
+    assert re.search(r'\[role="tablist"\] \{ scroll-snap-type: x mandatory; scroll-padding-inline: 48px; \}', css)
+    assert "scroll-snap-align: start" in re.search(r'\[data-testid="stTab"\] \{([^}]*)\}', css).group(1)
+    assert re.search(r'@media \(max-width: 640px\) \{\s*\[data-testid="stTabs"\] \[role="tablist"\] \{ padding-inline-end:', css)
+    for sel in (r"\.pillar-desc \{", r"\.gplaque-read \{", r"\.meliona-footer \.f-box small \{ display: block;", r"\.orient-f \{"):
+        assert re.search(sel + r"[^}]*text-wrap: pretty", css), sel
+    assert '[data-testid="stMain"] .orient .orient-l li { max-width: none; }' in css
+    assert re.search(r"\.orient-f \{[^}]*max-width: 68ch", css)
+    assert ".book-row:has(.book-figs) { grid-template-columns: 112px minmax(0, 68ch) 176px; }" in css
+    # third read: a scrolled strip stood on half a hairline (Streamlit's ::after
+    # is one screen wide); on a phone the scroller's own edge carries it
+    assert '[data-testid="stTabs"] [role="tablist"]::after { display: none; }' in css
+    assert "border-bottom: 2px solid rgba(74,70,64,.1)" in css
 
 
 def test_every_caption_says_its_one_thing_in_45_words_offline():

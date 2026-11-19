@@ -123,6 +123,40 @@ for (const [label, w, h] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
         hash: location.hash, up: !!window.__melionaNotice?.dock() }));
       ok(after.top >= 0 && after.top <= 80 && !after.hash, `phone: the shortcut glides to the engine (heading ${after.top.toFixed(0)}px from the top${after.hash ? `, hash ${after.hash}` : ''})`);
       ok(!after.up, 'phone: shortcut gone once the engine is on screen');
+      // A jump (a fling, a link, a key) can carry the small engine heading from
+      // below the screen to above it between two frames, so it is never seen
+      // on screen. The bar must still go, and come back on the way up
+      // (2026-11-19: it stayed over the tabs).
+      const jump = (to) => page.evaluate((to) => {
+        const sc = document.querySelector('[data-testid="stMain"]'), e = document.getElementById('engine');
+        const at = to === 'tabs' ? document.querySelector('[data-testid="stTabs"]') : e;
+        sc.style.scrollBehavior = 'auto';
+        sc.scrollTop += at.getBoundingClientRect().top + (to === 'tabs' ? 0 : -1.5 * innerHeight);
+        sc.style.scrollBehavior = '';
+      }, to);
+      // New on 2026-11-19: like the dock itself, required of this commit's own
+      // app (step 8) and of main; on a branch's step 5 the deployed site still
+      // runs the old build, so there it is reported, not required.
+      const fresh = (cond, msg) => (!cond && process.env.DOCK === 'optional')
+        ? console.log(`INFO  ${msg}: not yet on this deployment (DOCK=optional)`) : ok(cond, msg);
+      await jump('above'); await page.waitForTimeout(600);
+      ok(await page.evaluate(() => !!window.__melionaNotice?.dock()), 'phone: shortcut back between the hero and the engine');
+      await jump('tabs'); await page.waitForTimeout(600);
+      fresh(await page.evaluate(() => !window.__melionaNotice?.dock()), 'phone: shortcut gone after a jump straight past the engine to the tabs');
+      // Every chart in a tab is drawn at its box's width once the tab is open
+      // (2026-11-19: drawn at Plotly's 700px fallback, clipped on a phone).
+      for (const t of ['Risk Breakdown', 'Grit Zone']) {
+        await page.getByRole('tab', { name: t }).click();
+        await page.waitForTimeout(2500);
+        const w = await page.evaluate(() => [...document.querySelectorAll('[role="tabpanel"]:not([hidden]) .js-plotly-plot')]
+          .filter(g => g.offsetParent).map(g => [Math.round(g.querySelector('svg.main-svg').getBoundingClientRect().width),
+            Math.round(g.getBoundingClientRect().width)]));
+        fresh(w.length && w.every(([s, b]) => Math.abs(s - b) <= 2), `phone: ${t}: every chart drawn at its box's width (${w.map(x => x.join(' in ')).join(', ')})`);
+      }
+      // back to the first tab: the map checks below measure its frame, which a
+      // closed tab hides (it read 0px wide when this step left Grit Zone open)
+      await page.getByRole('tab', { name: 'Risk Topology' }).click();
+      await page.waitForTimeout(1500);
       await page.click('.m-notice-ok');
       const said = await page.evaluate(() => ({ shown: !!document.querySelector('.m-notice'),
         kept: (() => { try { return localStorage.getItem('meliona-cookie-notice'); } catch (e) { return 'blocked'; } })() }));
