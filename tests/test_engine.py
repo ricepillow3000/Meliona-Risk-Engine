@@ -792,12 +792,12 @@ def test_every_dependency_is_pinned_to_an_exact_version():
 
 def test_requirements_pin_yfinance():
     """The per-name cache splits and stitches downloads the way yfinance
-    1.7.0's multi.py assembles them (the stitch test proves it on that
+    1.8.0's multi.py assembles them (the stitch test proves it on that
     version). Unpinned, the host could resolve a version the test never saw."""
     root = pathlib.Path(__file__).resolve().parents[1]
     lines = (root / "requirements.txt").read_text(encoding="utf-8").splitlines()
     pins = [ln.split("#")[0].strip() for ln in lines if ln.startswith("yfinance")]
-    assert pins == ["yfinance==1.7.0"], pins
+    assert pins == ["yfinance==1.8.0"], pins
 
 
 def test_the_walks_typed_basket_pool_is_in_no_preset():
