@@ -15,6 +15,16 @@ Paste this into a new chat session to bring it up to speed instantly.
   tests) and the front end (`main.py`, `hero.py`, `static/`, `public/`).
   Before touching a file the other side owns, say so in the PR. Start every
   branch from the latest `main`; nothing is waiting on any branch.
+- **2026-11-19, Risk by name is a dumbbell (front-end session, ME-34):**
+  the idea John deferred on 11-17 ("worth a later look"). The grouped bars
+  drew two bars per name, and under equal weight every gold bar was the
+  same length. Now one row per name: a gold square at its share of the
+  money, a dark diamond at its share of the swings, a bronze hairline
+  between them, largest risk share on top; the chart is 30px a name, not
+  46. Same numbers (`risk_contributions` on the base weights); the trace
+  names `dollar weight` and `risk share` stay because deep_scan reads them
+  (`risk_by_name_fig` in `main.py`;
+  `test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares`).
 - **2026-11-12/13, front-end session (PRs #63, #69, #70):** John's story
   and the five answers rewritten to read aloud (shorter sentences, no
   advice, no forecast); bloated captions cut to 45 words or fewer
@@ -72,6 +82,16 @@ Paste this into a new chat session to bring it up to speed instantly.
   (`test_made_up_static_paths_cannot_fill_the_gzip_cache`, planted as M55;
   SECURITY-LESSONS.md, 2026-11-17). Lesson: a cache keyed by anything a
   visitor types is a visitor-keyed cache, however static the files behind it.
+- **2026-11-19, ME-35 front-end sweep (front-end session, PR #85, Live
+  audit on 06f9a4f green, every step):** the phone shortcut bar now hides
+  once the reader is at or past the engine, also after a jump (its own
+  observer on `stMain`); the tabs stay on one line with 44px scroll arrows,
+  snap and a hairline; a chart opened in a tab is drawn at its box's width
+  (no Plotly layout transition); the Slice's button comes after its sketch
+  and plaque; two first-visitor reviews fixed headings that count, units
+  spelled out, the Book's own split said once, receipt rows and pretty
+  wrapping. Lessons: a probe step that changes tabs must put them back (the
+  map frame read 0px); cancel a superseded head's runs before pushing.
 - **2026-11-13 to 11-18, front-end session (PRs #73, #78, #80, all
   merged and live; Live audit run 313 on main `2f51aa0` green, every step):**
   - #73: the link preview and LinkedIn cover quote the newest live audit
@@ -106,6 +126,33 @@ Paste this into a new chat session to bring it up to speed instantly.
     is hidden for an outside anchor; the deep scan read cards by their shape
     and broke when a column was added (read by class); force-push is denied,
     so a squash-merged branch moves forward with `git merge -s ours`.
+- **2026-11-19, Dependabot bumps and an honest mutation harness (back-end
+  session):** pandas 3.1.0 -> 3.1.1 (#66) and streamlit 1.66.1 -> 1.67.0
+  (#68) merged, each with all four audits green; #68 was tested on top of
+  #66. Streamlit 1.67 added an experimental agent API (drive the app over
+  HTTP or MCP at `/_stcore/agent/`), off by default but its routes answer:
+  now pinned off in `.streamlit/config.toml` and 404 in `serve.py`
+  (`test_streamlits_agent_api_stays_off_and_out_of_reach`, M56/M57). And the
+  mutation harness was lying: since #78 its repo copy left out `.claude/` and
+  `audit/`, which two tests read, so those tests errored in every copy and
+  were credited with catching every planted bug. The copy now keeps them,
+  and an unbroken copy runs first - if it is already red, nothing else runs
+  (`test_the_mutation_harness_refuses_a_copy_that_is_red_before_any_bug`).
+  Re-run honestly, M35, M41, M55, M56 and M57 are caught by their own tests.
+  The Mutation check then ran all 57 on the honest harness: 57/57 caught.
+  The rest of the Dependabot backlog merged the same night, each with its
+  audits green: yfinance 1.7.0 -> 1.8.0 (#67; the stitch test passes on
+  1.8.0's real `yf.download`, so the pin moved; provenance gave the same
+  prices as on 1.7.0, EURUSD=X's one repaired bar included), and the GitHub
+  Actions majors checkout 7.0.1 (#40), setup-python 7.1.0 (#38), setup-node
+  7.1.0 (#39), download-artifact 8.0.2 (#41) and setup-qemu 4.4.0 (#37,
+  whose first real test was main's publish job: amd64 and arm64 built).
+  Pair and Options were cancelled on #37 and #39, whose files those audits
+  never run. Dependabot's five-PR cap for Actions had held back
+  upload-artifact and the docker build actions; their PRs come next week.
+  The two sessions coordinated merges by message (back end and front end)
+  and cancelled superseded runs: seven back-end PRs and the front end's #85,
+  each running all four audits, kept GitHub's runners queued for hours.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
   day, now one request per made-up name (2026-11-13); presets and cached

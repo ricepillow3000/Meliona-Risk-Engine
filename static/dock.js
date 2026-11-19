@@ -104,12 +104,29 @@
   // No observer (a very old browser): the bar stays down, the notice still works.
   var io = !('IntersectionObserver' in W) ? null : new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
-      var r = e.boundingClientRect, vh = e.rootBounds ? e.rootBounds.bottom : W.innerHeight;
-      if (e.target === heroCta) heroGone = !e.isIntersecting && r.bottom <= 0;
-      if (e.target === engine) engineAhead = !e.isIntersecting && r.top >= vh;
+      if (e.target === heroCta) heroGone = !e.isIntersecting && e.boundingClientRect.bottom <= 0;
     });
     update();
   });
+  // The engine heading is small, so a jump (a fling, a link, a key) can carry
+  // it from below the screen to above it between two frames: "on screen" never
+  // changes, no entry comes, and the bar stayed over the tabs. Its own observer
+  // counts everything above the screen's bottom edge as in (the root reaches
+  // far up), so "the engine is ahead" is one state any crossing flips. The root
+  // is the page's scroller (stMain), which clips first, as in reveal.js.
+  var SCROLLER = '[data-testid="stMain"]', ALL_ABOVE = '1000000px 0px 0px 0px';
+  var eio = null, eRoot;
+  function engineWatch() {
+    var sc = D.querySelector(SCROLLER);
+    if (!io || (eio && eRoot === sc)) return;
+    if (eio) eio.disconnect();
+    eRoot = sc;
+    eio = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.target === engine) engineAhead = !e.isIntersecting; });
+      update();
+    }, { root: sc, rootMargin: ALL_ABOVE });
+    if (engine) eio.observe(engine);
+  }
   // Streamlit writes the page after this runs and may redraw a block on a
   // rerun: whenever the page changes, follow the CURRENT hero button and
   // engine heading (two lookups, once a frame at most).
@@ -122,10 +139,11 @@
       heroCta = h; heroGone = false;
       if (h) io.observe(h);
     }
+    engineWatch();
     if (g !== engine) {
-      if (engine) io.unobserve(engine);
+      if (engine) eio.unobserve(engine);
       engine = g; engineAhead = true;
-      if (g) io.observe(g);
+      if (g) eio.observe(g);
     }
     update();
   }

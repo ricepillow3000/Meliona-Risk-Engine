@@ -61,8 +61,9 @@ HEADERS = {
 # metrics: live session counts, open to anyone by default. upload_file: the app
 # has no uploader, but streamlit still takes files there, held in memory until
 # the session ends, behind an xsrf check a script passes by sending the same
-# made-up token as cookie and header (security review, 2026-11-12).
-HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")
+# made-up token as cookie and header (security review, 2026-11-12). agent:
+# streamlit 1.67's agent API, off here, but its routes answer anyway.
+HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file", "/_stcore/agent")
 
 
 class SecurityHeaders:

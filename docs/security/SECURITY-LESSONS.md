@@ -172,3 +172,13 @@ junk, after which the real bundle was never kept and every visitor's load recomp
 process. Reproduced against the real app; fixed test-first (`test_made_up_static_paths_cannot_fill_the_gzip_cache`,
 planted as M55): the page fallback is still gzipped but never kept, so only the bundle's own files (~320) fill the
 cache. Lesson: a cache keyed by anything a visitor types is a visitor-keyed cache, however static the files behind it.
+
+### 2026-11-19: Streamlit 1.67 brought an agent API (review of the Dependabot bump, #68)
+1.67.0 adds an experimental agent API: a script drives the app over HTTP at `/_stcore/agent/interact`, or as an MCP
+server at `/_stcore/agent/mcp`, described at `/_stcore/agent/openapi.json`. Read from 1.67.0's own source: it is off
+by default (`server.enableAgentApi`), and while off the two driving routes refuse without reading the body, but all
+three routes always answer, and a later release could change the default. Nothing here needs it, so it is pinned off
+by name in `.streamlit/config.toml` and `serve.py` answers 404 under `/_stcore/agent` (test-first:
+`test_streamlits_agent_api_stays_off_and_out_of_reach`, planted as M56 and M57; the test also fails if Streamlit
+renames the switch). Lesson: a dependency bump can add a door. Read the release notes for new routes and settings,
+not only for breaking changes.
