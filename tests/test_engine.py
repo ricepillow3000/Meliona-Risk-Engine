@@ -7772,6 +7772,10 @@ def test_the_second_first_visitor_review_of_2026_11_19_holds():
     assert '[data-testid="stMain"] .orient .orient-l li { max-width: none; }' in css
     assert re.search(r"\.orient-f \{[^}]*max-width: 68ch", css)
     assert ".book-row:has(.book-figs) { grid-template-columns: 112px minmax(0, 68ch) 176px; }" in css
+    # third read: a scrolled strip stood on half a hairline (Streamlit's ::after
+    # is one screen wide); on a phone the scroller's own edge carries it
+    assert '[data-testid="stTabs"] [role="tablist"]::after { display: none; }' in css
+    assert "border-bottom: 2px solid rgba(74,70,64,.1)" in css
 
 
 def test_every_caption_says_its_one_thing_in_45_words_offline():

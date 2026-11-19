@@ -351,7 +351,12 @@ html { scroll-behavior: smooth; }
    was a resting place with no label on it: room after the last tab lets
    every stop put a whole label 48px in from the left */
 @media (max-width: 640px) {
-  [data-testid="stTabs"] [role="tablist"] { padding-inline-end: calc(100% - 200px); } }
+  [data-testid="stTabs"] [role="tablist"] { padding-inline-end: calc(100% - 200px);
+      /* Streamlit draws the strip's hairline as an ::after one screen wide,
+         so a scrolled strip stood on half a line: the scroller's own edge
+         stays put under every label */
+      border-bottom: 2px solid rgba(74,70,64,.1); }
+  [data-testid="stTabs"] [role="tablist"]::after { display: none; } }
 /* its arrows: flat paper over the labels they cover, not Streamlit's darker
    gradient fade (flat colour, no decorative gradients) */
 [data-testid="stTabsScrollRight"], [data-testid="stTabsScrollLeft"] {
@@ -1340,7 +1345,8 @@ a.pmark:focus-visible, .meliona-footer a.f-mark:focus-visible, .thanks-row a:foc
    match, and the CTA underneath rises into view. */
 .st-key-gungnir_zone .gungnir-plaque { max-width: 100% !important; }
 /* stacked on a phone, the column gap already parts the sketch and the plaque */
-@media (max-width: 640px) { .st-key-gungnir_zone .gungnir-plaque { margin-top: 0; } }
+@media (max-width: 640px) { .st-key-gungnir_zone .gungnir-plaque { margin-top: 0; }
+  .st-key-gungnir_zone .showcase-section { padding-bottom: 0; } }
 
 @media (max-height: 1000px) {
   /* the sketch is the tallest thing in the row, and mostly air around the
