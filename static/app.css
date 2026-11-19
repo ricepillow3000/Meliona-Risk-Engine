@@ -395,9 +395,22 @@ html { scroll-behavior: smooth; }
     font-weight: 400; font-size: 0.8125rem; letter-spacing: normal; text-transform: none;
     color: #5D574D; }
 .book-text { font-family: Georgia, serif; font-size: 0.9375rem; line-height: 1.6; color: #3F3B35; }
+/* the row's figures beside its sentence (a card's stat column): the ticker,
+   its share with a hairline bar to scale, its grit and its partner */
+.book-row:has(.book-figs) { grid-template-columns: 112px minmax(0, 1fr) 176px; }
+.book-figs { display: flex; flex-direction: column; gap: 3px; padding: 2px 0 0 16px;
+    border-left: 1px solid rgba(63,59,53,.18); font-family: Georgia, serif;
+    font-size: 0.8125rem; line-height: 1.45; color: #5D574D; }
+.book-figs b { font-size: 1.0625rem; color: #3F3B35; }
+.book-figs .book-bar { display: block; height: 2px; max-width: 100%; margin: 1px 0 3px;
+    background: #9A7B4F; }
+.is-cushion .book-figs .book-bar { background: #2E2A25; }
 .book-flag { color: #6A5030; }
 @media (max-width: 640px) {
-  .book-row { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+  .book-row, .book-row:has(.book-figs) { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .book-figs { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 12px;
+      padding: 0; border-left: 0; }
+  .book-figs .book-bar { display: none; } }
 
 /* A section heading inside the page: the title as a kicker, the subtitle as
    the serif line under it, then the annual-report rule (main.py panel_head). */
@@ -739,6 +752,22 @@ div[data-baseweb="select"] > div:hover { border-color: #9A7B4F !important; }
     animation: row-in 160ms var(--ease-out) backwards;
     animation-delay: calc(var(--row, 0) * var(--row-stagger)); }
 @keyframes row-in { from { opacity: 0; translate: 0 -4px; } }
+/* a chart's lines draw once as they arrive (Anime.js's createDrawable, in
+   CSS): reveal.js sets pathLength="1", so one dash is the whole line */
+.reveal-on path.line-draw { animation: line-draw 1.1s var(--ease-out) both; }
+@keyframes line-draw { from { stroke-dasharray: 1 1; stroke-dashoffset: 1; }
+                       to   { stroke-dasharray: 1 1; stroke-dashoffset: 0; } }
+/* the footer index's gold rule glides to the entry under the pointer */
+.meliona-footer .f-rail { position: relative; }
+.meliona-footer .f-trail { position: absolute; left: -14px; top: 0; width: 3px; background: #B8955E;
+    opacity: 0; pointer-events: none;
+    transition: translate var(--move) var(--ease-in-out), height var(--move) var(--ease-in-out),
+                opacity .2s ease; }
+.meliona-footer .has-trail .f-trail { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+    .reveal-on path.line-draw { animation: none; }
+    .meliona-footer .f-trail { transition: opacity .2s ease; }
+}
 
 /* Details settle: what a drawer or a tab opens onto arrives in reading
    order, 30ms apart - a flat rise, never a turn (what froze on iPhones was
@@ -940,13 +969,22 @@ div[data-baseweb="select"] > div:hover { border-color: #9A7B4F !important; }
 .faq-section { display: flex; flex-direction: column; align-items: flex-start; gap: 18px;
     padding: 88px 0 8px; }
 .faq-section > .ar-rule { max-width: 560px; }
-.faq-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 64px;
-    width: 100%; margin-top: 10px; border-top: 3px solid #2E2A25; }
-.faq-row { padding: 22px 0 20px; border-bottom: 1px solid rgba(63,59,53,.18); min-width: 0; }
+.faq-list { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; max-width: 880px;
+    margin-top: 10px; border-top: 3px solid #2E2A25; }
+.faq-row { border-bottom: 1px solid rgba(63,59,53,.18); min-width: 0; }
+/* the question is the control: the whole row opens it, a + on the right says so */
+.faq-row > summary { display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
+    padding: 20px 0; cursor: pointer; list-style: none; }
+.faq-row > summary::-webkit-details-marker { display: none; }
+.faq-row > summary::after { content: "+"; font-family: Georgia, serif; font-size: 1.375rem;
+    line-height: 1; color: #6A5030; }
+.faq-row[open] > summary::after { content: "\2212"; }
+.faq-row > summary:hover .faq-q { color: #6A5030; }
+.faq-row > summary:focus-visible { outline: 2px solid #6A5030; outline-offset: 3px; }
 .faq-q { font-family: Georgia, serif !important; font-size: 1.125rem !important; font-weight: 700 !important;
-    line-height: 1.4 !important; color: #3F3B35; margin: 0 0 8px !important; padding: 0 !important; }
-.faq-a { font-family: Georgia, serif; font-size: 1rem; line-height: 1.6; color: #4A4640; margin: 0; }
-@media (max-width: 900px) { .faq-list { grid-template-columns: minmax(0, 1fr); } }
+    line-height: 1.4 !important; color: #3F3B35; margin: 0 !important; padding: 0 !important; }
+.faq-a { font-family: Georgia, serif; font-size: 1rem; line-height: 1.6; color: #4A4640; margin: 0;
+    padding: 0 0 22px; }
 /* Contact: the heading, then the form beside a small receipt of the facts. */
 .contact-head { display: flex; flex-direction: column; align-items: flex-start; gap: 18px;
     padding: 88px 0 18px; scroll-margin-top: 28px; }
