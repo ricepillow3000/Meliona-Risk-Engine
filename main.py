@@ -2077,8 +2077,8 @@ with tab_breakdown:
     st.plotly_chart(rc_fig, width="stretch", config=PLOTLY_CFG)
     top = rc["risk_pct"].idxmax()
     st.caption(
-        f"Gold square: the share of the money in each name. Dark diamond: its "
-        f"share of the portfolio's swings (volatility). The line between them is "
+        f"Gold square: each name's share of the money. Dark diamond: its "
+        f"share of the swings (volatility). The line between them is "
         f"the gap. {top} causes the most ({rc.loc[top, 'risk_pct']:.0%}). Equal "
         "money is not equal risk; switch Weights to Risk parity to line the "
         "diamonds up."

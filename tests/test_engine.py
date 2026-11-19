@@ -7653,6 +7653,18 @@ def test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares():
     assert 'barmode="group"' not in block, "Risk by name is still grouped bars"
 
 
+def test_every_caption_says_its_one_thing_in_45_words_offline():
+    """craft_check's bloat rule (John, 2026-11-12: 45 words or fewer), run on
+    the offline page so it fails before a push, not in the Live audit: the
+    dumbbell's first caption was 47 words and only the live run caught it."""
+    at, restore = _offline_app()
+    try:
+        long = [c.value for c in at.caption if len(c.value.split()) > 45]
+    finally:
+        restore()
+    assert not long, [f"{len(c.split())}w: {c[:60]}" for c in long]
+
+
 def test_the_books_figure_column_repeats_only_its_sentence():
     """John, 2026-11-17 (a card's stat column, after Kokonut UI): each lead and
     anchor shows its ticker, share, grit and partner beside its sentence. The
