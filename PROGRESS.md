@@ -72,6 +72,19 @@ Paste this into a new chat session to bring it up to speed instantly.
   (`test_made_up_static_paths_cannot_fill_the_gzip_cache`, planted as M55;
   SECURITY-LESSONS.md, 2026-11-17). Lesson: a cache keyed by anything a
   visitor types is a visitor-keyed cache, however static the files behind it.
+- **2026-11-19, Dependabot bumps and an honest mutation harness (back-end
+  session):** pandas 3.1.0 -> 3.1.1 (#66) and streamlit 1.66.1 -> 1.67.0
+  (#68) merged, each with all four audits green; #68 was tested on top of
+  #66. Streamlit 1.67 added an experimental agent API (drive the app over
+  HTTP or MCP at `/_stcore/agent/`), off by default but its routes answer:
+  now pinned off in `.streamlit/config.toml` and 404 in `serve.py`
+  (`test_streamlits_agent_api_stays_off_and_out_of_reach`, M56/M57). And the
+  mutation harness was lying: since #78 its repo copy left out `.claude/` and
+  `audit/`, which two tests read, so those tests errored in every copy and
+  were credited with catching every planted bug. The copy now keeps them,
+  and an unbroken copy runs first - if it is already red, nothing else runs
+  (`test_the_mutation_harness_refuses_a_copy_that_is_red_before_any_bug`).
+  Re-run honestly, M35, M41, M55, M56 and M57 are caught by their own tests.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
   day, now one request per made-up name (2026-11-13); presets and cached

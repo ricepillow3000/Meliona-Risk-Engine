@@ -10,7 +10,9 @@ engine and narrative tests run against it, and the first red test is named. a
 bug no test catches is a hole: write the test that kills it (John, 2026-11-10;
 the first run caught 21 of 36, the tests added after it catch all 36; 37-40
 guard end-of-day, 41-45 the 2026-11-12 security review, 46-54 the
-2026-11-13 audit, 55 the 2026-11-17 gzip review).
+2026-11-13 audit, 55 the 2026-11-17 gzip review, 56-57 streamlit
+1.67's agent api). an unbroken copy runs first: if it is already red, nothing
+else runs (2026-11-19: a test that errored in every copy caught every bug).
 takes ~40 minutes on 4 cores: run it after touching src/, serve.py or safe_err.
 exit code 1 if any planted bug survives.
 """
@@ -61,13 +63,13 @@ BUGS = [
     ("M32", "src/data_quality.py", "EXTREME_MOVE_THRESHOLD = 0.50", "EXTREME_MOVE_THRESHOLD = 5.0", "extreme moves never flagged"),
     ("M33", "src/data_quality.py", '"PASS" if staleness_days <= 1 else "WARN"', '"PASS" if staleness_days <= 100 else "WARN"', "stale feed reads fresh"),
     ("M34", "serve.py", '    "x-content-type-options": "nosniff",', '    "x-content-type-options": "",', "nosniff dropped"),
-    ("M35", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")', 'HIDDEN = ("/_stcore/upload_file",)', "metrics endpoint exposed"),
+    ("M35", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file", "/_stcore/agent")', 'HIDDEN = ("/_stcore/upload_file", "/_stcore/agent")', "metrics endpoint exposed"),
     ("M36", "main.py", 'return f"{type(exc).__name__}; quote', 'return f"{exc}; quote', "server paths shown to visitors"),
     ("M37", "src/ingestion.py", "else _finished_rows(_own_rows(raw, t, alone=len(ask) == 1), t))", "else _own_rows(raw, t, alone=len(ask) == 1))", "today's live price kept as a close"),
     ("M38", "src/ingestion.py", "    if fetched < last_close_boundary():", "    if False:", "a pre-close pull hides the close"),
     ("M39", "src/ingestion.py", "CLOSE_FINAL = datetime.time(16, 30)", "CLOSE_FINAL = datetime.time(9, 30)", "bar kept from the opening bell"),
     ("M40", "src/ingestion.py", 'ALL_DAY = ("=X", "=F", "-USD")', "ALL_DAY = ()", "fx bar kept before its day ends"),
-    ("M41", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")', 'HIDDEN = ("/_stcore/metrics",)', "uploads park files in memory"),
+    ("M41", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file", "/_stcore/agent")', 'HIDDEN = ("/_stcore/metrics", "/_stcore/agent")', "uploads park files in memory"),
     ("M42", "serve.py", "            code = 1009 if size > MAX_MESSAGE_BYTES else 1013", "            code = 1013", "a 16 MB message reaches the app"),
     ("M43", "serve.py", '    addr = hops[-1] if hops else', '    addr = hops[0] if hops else', "client picks its own address"),
     ("M44", "src/ingestion.py", "                   if clock - _NO_DATA.get(", "                   if True or clock - _NO_DATA.get(", "made-up names spend the budget"),
@@ -82,8 +84,12 @@ BUGS = [
     ("M53", "docker/Dockerfile", "FROM python:3.13-slim@sha256:", "FROM python:3.13-slim #", "the image's base moves under it"),
     ("M54", ".github/dependabot.yml", '      - dependency-name: "python"\n', '      - dependency-name: "none"\n', "Dependabot moves the image off the site's Python"),
     ("M55", "serve.py", "            if not page and len(self.cache) < GZIP_CACHE_MAX:", "            if len(self.cache) < GZIP_CACHE_MAX:", "made-up paths fill the gzip cache"),
+    ("M56", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file", "/_stcore/agent")', 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")', "the agent API's routes answer strangers"),
+    ("M57", ".streamlit/config.toml", "enableAgentApi = false\n", "enableAgentApi = true\n", "a script drives the app over HTTP"),
 ]
-SKIP = shutil.ignore_patterns(".git", "data", "logs", "audit", ".claude", "__pycache__", "node_modules")
+# only caches stay out: tests read .claude/skills and audit/ (left out, they
+# errored in every copy and were credited with every catch, 2026-11-19)
+SKIP = shutil.ignore_patterns(".git", "data", "logs", "__pycache__", "node_modules")
 
 
 def first_red(cmd: list[str], cwd: Path) -> str | None:
@@ -97,6 +103,20 @@ def first_red(cmd: list[str], cwd: Path) -> str | None:
     return None
 
 
+def tests_red(copy: Path) -> str | None:
+    return (first_red([sys.executable, "-m", "tests.test_engine"], copy)
+            or first_red([sys.executable, "-m", "tests.test_narrative"], copy))
+
+
+def control() -> str | None:
+    """the unbroken copy's first red test. anything red here would be credited
+    with catching every planted bug."""
+    with tempfile.TemporaryDirectory(prefix="mut-control-") as tmp:
+        copy = Path(tmp) / "repo"
+        shutil.copytree(ROOT, copy, ignore=SKIP)
+        return tests_red(copy)
+
+
 def run(bug) -> tuple[str, str | None, str]:
     bid, rel, old, new, why = bug
     with tempfile.TemporaryDirectory(prefix=f"mut-{bid}-") as tmp:
@@ -107,13 +127,16 @@ def run(bug) -> tuple[str, str | None, str]:
         if text.count(old) != 1:
             return bid, f"STALE: the text to break is not in {rel} exactly once - update BUGS", why
         f.write_text(text.replace(old, new), encoding="utf-8")
-        red = (first_red([sys.executable, "-m", "tests.test_engine"], copy)
-               or first_red([sys.executable, "-m", "tests.test_narrative"], copy))
-        return bid, red, why
+        return bid, tests_red(copy), why
 
 
 def main(argv: list[str]) -> int:
     bugs = [b for b in BUGS if not argv or b[0] in argv]
+    red = control()
+    if red:
+        print(f"BROKEN    the copy is red before any bug is planted: {red[:110]}\n"
+              "          fix that first, or it would be credited with every catch")
+        return 2
     survived = 0
     with ThreadPoolExecutor(max_workers=4) as pool:
         for bid, red, why in pool.map(run, bugs):

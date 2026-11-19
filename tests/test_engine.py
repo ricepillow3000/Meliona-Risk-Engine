@@ -2393,6 +2393,40 @@ def test_every_response_carries_the_security_headers():
     assert "permissions-policy" not in serve.HEADERS   # see serve.py
 
 
+def test_streamlits_agent_api_stays_off_and_out_of_reach():
+    """Streamlit 1.67 added an experimental agent API: a client drives the app
+    over HTTP or MCP at /_stcore/agent/. It is off by default, but its three
+    routes answer anyway, and a future release could turn it on. A public page
+    with no agent to serve keeps the switch off by name and answers 404 there."""
+    import asyncio
+    import tomllib
+
+    import serve
+    from streamlit import config
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    cfg = tomllib.loads((root / ".streamlit" / "config.toml").read_text(encoding="utf-8"))
+    assert cfg["server"].get("enableAgentApi") is False, "the agent API is not pinned off"
+    assert "server.enableAgentApi" in config._config_options_template, \
+        "Streamlit renamed the agent API switch - re-point .streamlit/config.toml"
+
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    for path in ("/_stcore/agent/interact", "/_stcore/agent/mcp", "/_stcore/agent/openapi.json"):
+        sent = []
+
+        async def send(message, sent=sent):
+            sent.append(message)
+
+        async def receive():
+            return {"type": "http.request"}
+
+        asyncio.run(serve.SecurityHeaders(inner)({"type": "http", "path": path}, receive, send))
+        assert sent[0]["status"] == 404, path
+
+
 def test_one_address_cannot_flood_the_shared_process():
     """John, 2026-11-04: "make sure there's rate limiting". serve.py's RateLimit
     caps, per address, the sessions opened a minute, the sessions open at once
@@ -8109,6 +8143,26 @@ def test_the_page_answers_like_an_app_skeletons_taps_and_offline():
 # planted in copies of the code; 15 left every check green. Each test below
 # kills one of them, and checks both ways: the real code passes, the planted
 # bug fails. tools/mutation_check.py replays all 36.
+
+
+def test_the_mutation_harness_refuses_a_copy_that_is_red_before_any_bug():
+    """2026-11-19: from #78 on, the harness copied the repo without .claude/,
+    which a design test reads, so that test errored in every copy and was
+    credited with "catching" every planted bug. The harness now runs the
+    unbroken copy first and stops if anything is already red there."""
+    import tools.mutation_check as mc
+
+    real = (mc.first_red, mc.run)
+
+    def no_bug_may_run(bug):
+        raise AssertionError(f"{bug[0]} ran on a copy that was red before any bug")
+
+    try:
+        mc.first_red = lambda cmd, cwd: "ERROR test_reads_a_file_the_copy_left_out"
+        mc.run = no_bug_may_run
+        assert mc.main(["M01"]) != 0
+    finally:
+        mc.first_red, mc.run = real
 
 
 def test_var_reads_the_loss_tail_and_cvar_averages_the_days_at_or_past_it():
