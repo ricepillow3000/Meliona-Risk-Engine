@@ -153,6 +153,10 @@ for (const [label, w, h] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
             Math.round(g.getBoundingClientRect().width)]));
         fresh(w.length && w.every(([s, b]) => Math.abs(s - b) <= 2), `phone: ${t}: every chart drawn at its box's width (${w.map(x => x.join(' in ')).join(', ')})`);
       }
+      // back to the first tab: the map checks below measure its frame, which a
+      // closed tab hides (it read 0px wide when this step left Grit Zone open)
+      await page.getByRole('tab', { name: 'Risk Topology' }).click();
+      await page.waitForTimeout(1500);
       await page.click('.m-notice-ok');
       const said = await page.evaluate(() => ({ shown: !!document.querySelector('.m-notice'),
         kept: (() => { try { return localStorage.getItem('meliona-cookie-notice'); } catch (e) { return 'blocked'; } })() }));
