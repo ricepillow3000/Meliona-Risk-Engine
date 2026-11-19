@@ -24,10 +24,59 @@ Paste this into a new chat session to bring it up to speed instantly.
   side columns from their own side (`tools/arrival_check.mjs`); and every
   word a visitor reads says "anchor", never "cushion" (the code's own
   names, `Role.CUSHION` and the payload's `cushion` field, stay).
+- **2026-11-13, a full back-end security audit (back-end session, PRs #72
+  and #74, both merged; #72 live at fefc8a7, Live audit green):** four
+  cold readers (CI and supply chain, the data path, HTML/JS output,
+  `serve.py` and netguard) found no way in. Everything they did find is
+  fixed, each test-first and planted as a bug (M46-M53, all caught):
+  - cache files were named by 12 hex characters of md5, so a basket could
+    be searched offline to land in a preset's slot: now full sha256;
+  - the cache prune could evict the anchor shelf's USMV: anchors now count
+    as a preset;
+  - a typo logged an ERROR and a traceback on every rerun: one INFO line
+    (`log_no_data`; a preset with no data is still an incident);
+  - one real name beside made-up ones had each made-up name asked three
+    times: only a symbol we know is real is asked again;
+  - Dependabot PRs ran no audit: `dependabot/**` now triggers all four;
+  - starlette, uvicorn and websockets are pinned; the image ignores the
+    same secret files git does;
+  - host settings (e-mails, phone, site URL) are checked against their
+    shape when read (`host_setting`);
+  - `server.maxMessageSize` 16 -> 1 MB (largest message measured at 103 KB
+    with 30 years per name; the deep scan fails past half the cap);
+  - the image's base is pinned by digest (Dependabot watches `docker/`),
+    and only a main-only job may publish it.
+  Nothing from the audit is left open (SECURITY-LESSONS.md, 2026-11-13).
+  One timing check (a 217 ms frame in one button's glide, limit 200 ms)
+  failed once on the CI runner after #72 and passed on re-run.
+- **2026-11-14, Dependabot stays on the site's Python (PR #77, live at
+  d9c95e1, Live audit green):** minutes after #74 let Dependabot watch
+  `docker/`, it proposed python 3.13-slim -> 3.15-slim (#75), which would
+  have moved the image off the site's Python (`runtime.txt` 3.13). Its
+  docker entry now ignores minor and major `python` updates: it may still
+  propose new builds of 3.13 (security patches, by digest), and a version
+  change moves `runtime.txt` and the image together, on purpose. Pinned by
+  `test_the_image_is_pinned_and_only_main_may_publish_it` (M54). Dependabot
+  closed #75 itself. The first Live audit after #77 failed only step 5:
+  the front end's #73 merged 76 s later, so Railway already served the
+  newer commit; the run on d9c95e1 passed.
+- **2026-11-17, the gzip cache could be filled with made-up paths (back-end
+  session, PR #81):** the front end's `StaticGzip` (#78, in `serve.py`)
+  kept one gzipped copy per `/static/` path, up to 1,024. Streamlit answers
+  any made-up `/static/` path with its page (200, text/html), so about
+  1,024 requests - under the rate limit - filled the cache with junk; after
+  that the real bundle was never kept and every visitor's load recompressed
+  about 21 MB on the one shared process. Reproduced against the real app.
+  The page fallback is still gzipped but never kept, so only the bundle's
+  own files (~320) can fill the cache
+  (`test_made_up_static_paths_cannot_fill_the_gzip_cache`, planted as M55;
+  SECURITY-LESSONS.md, 2026-11-17). Lesson: a cache keyed by anything a
+  visitor types is a visitor-keyed cache, however static the files behind it.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
-  day; presets and cached baskets keep working. Fix only on evidence of
-  abuse (SECURITY-LESSONS.md, 2026-11-12).
+  day, now one request per made-up name (2026-11-13); presets and cached
+  baskets keep working. Fix only on evidence of abuse (SECURITY-LESSONS.md,
+  2026-11-12).
 - **2026-11-12, end of day means end of day, and a cold security review
   (back-end session, PR #64, live at cced9d4):** in market hours Yahoo's
   daily download carries today's row at the live price, and the cache kept
