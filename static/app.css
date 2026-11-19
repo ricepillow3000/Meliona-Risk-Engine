@@ -344,6 +344,10 @@ html { scroll-behavior: smooth; }
    "TOPOLOG / Y" and clipped the top line (2026-11-19); a tab keeps its width
    and the strip scrolls sideways instead, with its labelled arrow */
 [data-testid="stTab"] { flex-shrink: 0; }
+/* its arrows: flat paper over the labels they cover, not Streamlit's darker
+   gradient fade (flat colour, no decorative gradients) */
+[data-testid="stTabsScrollRight"], [data-testid="stTabsScrollLeft"] {
+    background: #EDE9E3 !important; color: #6A5030 !important; }
 [data-testid="stTab"] [data-testid="stMarkdownContainer"] p {
     white-space: nowrap;
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 700;
@@ -1513,14 +1517,15 @@ a.pmark:focus-visible, .meliona-footer a.f-mark:focus-visible, .thanks-row a:foc
    Streamlit 1.66 draws these controls with react-aria, so the selectors are
    its data-testids. Only for a coarse pointer: a mouse keeps the density. */
 @media (pointer: coarse) {
-  button[aria-label="Clear all"], [data-testid="stTooltipHoverTarget"] button,
-  [data-testid="stTabsScrollRight"], [data-testid="stTabsScrollLeft"] { position: relative; }
+  button[aria-label="Clear all"], [data-testid="stTooltipHoverTarget"] button { position: relative; }
   button[aria-label="Clear all"]::after,
   [data-testid="stTooltipHoverTarget"] button::after,
   [data-testid="stSlider"] [data-rac]:has(> div > input[type="range"])::after {
       content: ""; position: absolute; inset: -14px; }
-  [data-testid="stTabsScrollRight"]::after, [data-testid="stTabsScrollLeft"]::after {
-      content: ""; position: absolute; inset: -2px -12px; }
+  /* the strip scrolls now (one line a tab), so its arrows show on a phone:
+     a real 44px box, not a hit area the eye and the probes cannot see */
+  [data-testid="stTabsScrollRight"], [data-testid="stTabsScrollLeft"] {
+      min-width: 44px; min-height: 44px; }
   [data-testid="stMultiSelectTagsContainer"] span:has(> button[aria-label^="Remove "]) {
       min-height: 44px; align-items: stretch; }
   button[aria-label^="Remove "] { min-width: 44px; align-self: stretch;

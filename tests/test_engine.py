@@ -7713,6 +7713,11 @@ def test_the_first_visitor_review_of_2026_11_19_holds():
     fresh = _exec_nodes([_lift_assign(tree, "fresh")], {"health": {"staleness_days": 3}})["fresh"]
     assert fresh == "3\u00a0days old", fresh
     assert "st.columns([1.2, 2.6, 1.2])" not in main, "the side picker is centred off the page's left edge"
+    # the tab strip scrolls now, so its arrows show: in Streamlit's own place
+    # (never position: relative), a real 44px box on touch, flat paper
+    assert not re.search(r'stTabsScrollRight"\][^{]*\{\s*position: relative', css)
+    assert re.search(r'stTabsScrollLeft"\] \{\s*min-width: 44px; min-height: 44px', css)
+    assert re.search(r'stTabsScrollLeft"\] \{\s*background: #EDE9E3 !important', css)
     assert "Weighting:\\u00a0{alloc_label}" in main, "the method line can end on a lone word"
     assert "are the Book's own split" in main, "the Book's shares and the headline's weights are not told apart"
     bar = re.search(r"\.meliona-footer \.f-bar \{([^}]*)\}", css).group(1)
