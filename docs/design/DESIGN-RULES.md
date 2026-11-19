@@ -218,7 +218,7 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 - **Headings say something**: no generic three-word headlines, no "Before you ask", no bare "Contact". An FAQ answer never opens by restating its question. — 2026-11-10 — same test.
 - **No vague calls to action.** Buttons say where they go ("Start with the Grit Zone", "Run the risk engine", "Contact John"). — 2026-11-02/10.
 - **No placeholder text** (lorem ipsum, TODO, TBD, "coming soon"). — 2026-11-04 — `test_every_link_on_the_page_goes_somewhere_and_no_placeholder_is_left`.
-- **Captions, list items and notes say their one thing in 45 words or fewer**, in every tab and drawer. — "anything boring, irrelevant, bloat description, remove it", 2026-11-12 — craft_check `bloat`.
+- **Captions, list items and notes say their one thing in 45 words or fewer**, in every tab and drawer. — "anything boring, irrelevant, bloat description, remove it", 2026-11-12 — craft_check `bloat`; offline before a push, `test_every_caption_says_its_one_thing_in_45_words_offline` (2026-11-19).
 - **The story and the five answers read aloud in one breath:** no sentence over 24 words, an average of 13 words or fewer. Write "nothing", never "None". — "I already got bored", 2026-11-12 — `test_the_story_and_the_answers_read_aloud_in_one_breath`.
 - **Plain words first, the method's name in brackets.** For example: "How the names move together" (Steady – Ledoit-Wolf / Plain history / Quick to react – EWMA), "Equal risk (risk parity)", "How bad years are simulated". Only the visible words changed; the values behind each choice are the same. — "simpler and easy for a user with limited technical skills", 2026-11-05 — `test_the_engines_controls_speak_plain_words_first`.
 - **Explanations in plain, short words.** The map's full model statement folds under "The maths, for specialists". — "simplify this for non technical users ... fun to read and they understand 100%", 2026-11-09.
@@ -287,7 +287,7 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 
 - **Plotly charts in the beige/bronze theme. No glow on charts.** Crosshair spikes are off.
 - **The cone** (after Bklit UI): its right edge prints the day-252 best 5%, median and worst 5%, plus the headline CVaR as a "Bad-year loss" mark — each the engine's own figure. The axis ends on the last day. — John, 2026-11-17 — `test_the_cone_says_its_own_numbers_and_ends_on_the_last_day`.
-- **Risk-by-name weights** are the unlevered base weights, so the two bars share one "% of portfolio" denominator.
+- **Risk by name is a dumbbell.** One row per name: a gold square at its share of the money, a dark diamond at its share of the swings, joined by a bronze hairline whose length is the gap. Rows run largest risk share on top. The two shares are the unlevered base weights' (one "% of portfolio" denominator), and the trace names `dollar weight` and `risk share` stay because deep_scan reads them. — John, 2026-11-19 (deferred on 2026-11-17 as "worth a later look") — `test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares`.
 - **Map design:**
   - Flat, near-opaque plates over a full-bleed matte terrain. Square panels with bronze crop marks, a framed and ticked plot, rhombus marks for names and the pairing, square toggles. — "a Swiss-grid map", 2026-10-30.
   - The film grain was removed later (2026-11-04).
@@ -458,7 +458,6 @@ chrome-devtools-mcp server (the guidance and a pinned speed check were used inst
   - Kokonut Liquid Glass, Card Flip, Particle and Gradient buttons, and Metric Card.
   - Bklit gradient areas, crosshair, glass pills, Projection Line and Live Line Chart.
   - Motion Primitives Tilt, Spotlight, Glow, Border Trail, Magnetic, Infinite Slider and Text Roll; Text Scramble.
-  - A dumbbell chart for "Risk by name" — deferred, "worth a later look".
 - Generated-site tells he listed (2026-11-10): gradient blobs, circle icons, purple, floating 3D shapes, identical feature cards, rainbow accents, buzzword copy, three-word headlines, FAQs that restate the question, emoji, vague calls to action, dead footer links, soft corners, no personality. Also spinners, blank screens, no tap feedback, and nothing shown offline.
 - AI-writing tells he listed (2026-11-02): em dashes, "It's not X. It's Y", random bold, emoji bullets, title case, one-line paragraphs, pivotal/moreover/serves as.
 
