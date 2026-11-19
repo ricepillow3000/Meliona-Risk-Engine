@@ -12,7 +12,7 @@ on:
         description: Deployed app to check in a browser
         default: https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app
   push:
-    branches: ["claude/**"]
+    branches: ["claude/**", "dependabot/**"]
   # Daily on main (2026-11-04 security review): nothing watched the live site
   # between pushes. On main, step 5 also proves Railway serves main's commit.
   schedule:
@@ -23,12 +23,18 @@ permissions:
 
 jobs:
   live-audit:
+    # Pinned, not ubuntu-latest: on 2026-11-04 ubuntu-latest became 26.04, which
+    # Playwright 1.56.1 cannot install Chromium on ("does not support chromium on
+    # ubuntu26.04-x64"), and every browser step (site, devices, glides, deep scan)
+    # failed before it ran. Move both together when Playwright supports 26.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
       SITE_URL: ${{ inputs.site_url || 'https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false  # nothing here pushes; the token stays off disk
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.13"
@@ -67,6 +73,8 @@ jobs:
         env:
           # on main the deployed site must be serving this very commit
           EXPECT_BUILD: ${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+          # new page features are required of the deployed site only once main is deployed
+          DOCK: ${{ github.ref == 'refs/heads/main' && 'required' || 'optional' }}
         run: |
           mkdir -p site-shots
           node tools/site_check.mjs "$SITE_URL" site-shots
@@ -93,7 +101,15 @@ jobs:
         if: always()
         run: |
           mkdir -p site-shots/devices
-          node tools/device_check.mjs http://127.0.0.1:8501 site-shots/devices
+          node tools/device_check.mjs http://127.0.0.1:8501 site-shots/devices 2>&1 | tee 8b.log; test "${PIPESTATUS[0]}" -eq 0
+          # a first visit's click, keys and wheel never paint a gold block (John, 2026-11-06)
+          node tools/key_wheel_check.mjs http://127.0.0.1:8501 site-shots/keys 2>&1 | tee -a 8b.log; test "${PIPESTATUS[0]}" -eq 0
+          # the wheel glides over the Risk Topology map too, not the browser's step (John, 2026-11-06)
+          node tools/map_wheel_check.mjs http://127.0.0.1:8501 2>&1 | tee -a 8b.log; test "${PIPESTATUS[0]}" -eq 0
+          # the page's craft: type, figures, measure, widows, touch, safe area, motion (John, 2026-11-09)
+          node tools/craft_check.mjs http://127.0.0.1:8501 2>&1 | tee -a 8b.log; test "${PIPESTATUS[0]}" -eq 0
+          # scrolling down, each block is seen arriving, from its side, never during the load (John, 2026-11-13)
+          node tools/arrival_check.mjs http://127.0.0.1:8501 2>&1 | tee -a 8b.log; test "${PIPESTATUS[0]}" -eq 0
       # Every button glide lands (tools/glide_load_check.mjs): on the settled
       # page, through a trackpad flick, under a reader's swipe back and a
       # steady mouse wheel - and pressed while the page is still loading. Each
@@ -118,6 +134,25 @@ jobs:
             pkill -f "server.port 8502" || true; sleep 2
           done
           exit $status
+      # John, 2026-11-04: "test simultaneous users and test backup restores".
+      # Ten visitors open the page at the same moment on this commit's app,
+      # through serve.py's rate limiter; then a copy of this checkout with no
+      # data/ and no logs/ - what a redeploy or a restore from git leaves - is
+      # started and timed to its first headline (the restore drill).
+      - name: 8e. This commit - ten visitors at once while one address floods it, and a restore from nothing
+        if: always()
+        run: |
+          # the flood (another address) runs WHILE the ten visitors load: it must be
+          # hung up on at the cap, and none of them may notice (tools/flood_check.py)
+          python -m tools.flood_check http://127.0.0.1:8501 > flood.log 2>&1 & flood=$!
+          node tools/load_check.mjs http://127.0.0.1:8501 10 240 simultaneous
+          wait $flood || { cat flood.log; exit 1; }; cat flood.log
+          rm -rf /tmp/restore && git worktree add -f /tmp/restore HEAD >/dev/null
+          (cd /tmp/restore && nohup streamlit run serve.py --server.port 8504 --server.headless true > /tmp/restore.log 2>&1 &)
+          start=$(date +%s)
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8504/_stcore/health >/dev/null && break; sleep 2; done
+          echo "restore: healthy after $(( $(date +%s) - start ))s from an empty checkout"
+          node tools/load_check.mjs http://127.0.0.1:8504 1 360 restore || { tail -40 /tmp/restore.log; exit 1; }
       - name: 9. Deployed site - recruiter walk (informational until this branch is deployed)
         if: always()
         continue-on-error: true
@@ -150,7 +185,10 @@ jobs:
       # read). Repeat them where the log ends.
       - name: 12. Provenance verdicts, repeated at the end of the log
         if: always()
-        run: grep -E "^FAIL|provenance checks pass" provenance.log || echo "provenance did not run"
+        run: |
+          grep -E "^FAIL|provenance checks pass" provenance.log || echo "provenance did not run"
+          # 8b's FAIL lines (every device, keys, map wheel, craft) where the log can be read
+          grep -E -A1 "FAIL|big step|Error" 8b.log 2>/dev/null | head -60 || true
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         if: always()

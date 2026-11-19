@@ -150,12 +150,25 @@ async function covered(page) {
       }
       const b = e.getBoundingClientRect();
       if (b.width < 2 || b.height < 2 || cs.pointerEvents === 'none' || e.disabled) return null;
+      // Land every arrival, then scroll the control into view, then land what
+      // started arriving on the way and scroll once more: a landed block moves
+      // (it loses its arrival offset), so scrolling before landing measured a
+      // control that had just moved off screen (Live audit on 8b27727).
+      const land = () => window.__melionaReveal?.revealAll();
+      land();
       e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });   // the site scrolls smoothly; measure where it lands
+      land();
+      e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       const c = e.getBoundingClientRect();
       const x = c.left + c.width / 2, y = c.top + c.height / 2;
       if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return `${(e.innerText || e.getAttribute('aria-label') || e.tagName).trim().slice(0, 30)} off screen`;
       const top = document.elementFromPoint(x, y);
       if (!top || e === top || e.contains(top) || top.contains(e)) return '';
+      // A help bubble is where the pointer rests, like measure()'s toolbars: the
+      // emulated phone's pointer stays where its last tap was, the page scrolled
+      // a "?" icon under it and its bubble opened over the centre of the screen
+      // (iPhone SE, Live audit on 49ee8d3). A finger leaves no such hover.
+      if (top.closest('[data-testid=stTooltipContent], [role=tooltip]')) return '';
       return `${(e.innerText || e.getAttribute('aria-label') || e.tagName).trim().replace(/\s+/g, ' ').slice(0, 30)} covered by ${top.tagName.toLowerCase()}.${String(top.className).slice(0, 30)}`;
     }).catch(() => null);
     if (r) bad.push(r);
@@ -175,11 +188,30 @@ async function settle(page, where = '') {
   }
 }
 
+// Every block in its landed state. One revealAll() is not enough: Streamlit
+// can mount a block just after it (a tab's or drawer's content), which then
+// starts its own arrival mid-measure - the Live audit on 05ff4dd measured an
+// iPad's drawer mid-slide over the tab strip. Land, wait two frames, repeat
+// until nothing is left to land.
+async function landed(page) {
+  for (let i = 0; i < 10; i++) {
+    const left = await page.evaluate(() => new Promise(done => {
+      window.__melionaReveal?.revealAll(); window.__melionaNotice?.dismiss();
+      requestAnimationFrame(() => requestAnimationFrame(() => done(document.querySelectorAll('.reveal-item').length)));
+    }));
+    if (!left) return;
+  }
+}
+
 const browser = await chromium.launch();
 for (const dev of names) {
   const d = DEVICES[dev];
   const ctx = await browser.newContext({ viewport: { width: d.width, height: d.height },
     deviceScaleFactor: d.scale, isMobile: d.mobile, hasTouch: d.mobile });
+  // The cookie notice (static/dock.js) is answered the way a returning visitor
+  // answered it: OK pressed. It is a fixed, informational layer, not what this
+  // tool measures, and on a desktop it sits over the bottom-left corner.
+  await ctx.addInitScript(() => { try { localStorage.setItem('meliona-cookie-notice', 'ok'); } catch (e) { /* blocked */ } });
   const page = await ctx.newPage();
   page.setDefaultTimeout(180000);
   const errors = [];
@@ -207,7 +239,8 @@ for (const dev of names) {
   const tabs = await page.$$('[role=tab]');
   for (let i = 0; i < tabs.length; i++) states.push([`tab ${i + 1}/${tabs.length}`, i]);
 
-  const found = { words: new Set(), overText: new Set(), clipped: new Set(), covered: new Set() };
+  const found = { words: new Set(), overText: new Set(), clipped: new Set(), covered: new Set(),
+                  ids: new Set(), opened: new Set() };
   let sideways = 0;
   for (const [, ti] of states) {
     if (ti !== null) {
@@ -223,7 +256,22 @@ for (const dev of names) {
     // state each one lands in. A reveal moves only opacity and transform, never
     // layout, so this is the page the visitor sees once scrolled to each block -
     // and a block still waiting below the screen (opacity 0) is not skipped.
-    await page.evaluate(() => window.__melionaReveal?.revealAll());
+    // Before landing anything: what the reader opened (a drawer's body, a
+    // tab's panel) is simply there - never waiting for an arrival (John's
+    // iPhone, 2026-11-05: blocks frozen mid-turn in every opened drawer).
+    (await page.evaluate(() => [...document.querySelectorAll(
+      '[data-testid="stExpanderDetails"] .reveal-item, [data-testid="stTabPanel"] .reveal-item')]
+      .map(e => (e.innerText || e.dataset.testid || e.tagName).trim().replace(/\s+/g, ' ').slice(0, 30))))
+      .forEach(x => found.opened.add(x));
+    // One element per id: Streamlit's automatic heading anchor once gave the
+    // Contact heading a second "contact" beside the section's own. Left out:
+    // st.dataframe's grid (Glide Data Grid) numbers its cells glide-cell-x-y
+    // inside every table, a library's own ids no page change can reach.
+    (await page.evaluate(() => { const n = {};
+      document.querySelectorAll('[id]').forEach(e => {
+        if (e.id && !e.id.startsWith('glide-cell-')) n[e.id] = (n[e.id] || 0) + 1; });
+      return Object.keys(n).filter(k => n[k] > 1); })).forEach(x => found.ids.add(x));
+    await landed(page);
     const m = await page.evaluate(measure);
     sideways = Math.max(sideways, m.sideways);
     m.words.forEach(x => found.words.add(x));
@@ -244,6 +292,8 @@ for (const dev of names) {
   ok(!found.covered.size, `${tag}: every button, tab and link clickable where drawn${found.covered.size ? ` (${found.covered.size}: ${list(found.covered)})` : ''}`);
   ok(!found.clipped.size, `${tag}: no text cut off${found.clipped.size ? ` (${found.clipped.size}: ${list(found.clipped)})` : ''}`);
   ok(!errors.length, `${tag}: no script errors${errors.length ? ` (${errors.slice(0, 2)})` : ''}`);
+  ok(!found.opened.size, `${tag}: what a drawer or tab opens is there at once${found.opened.size ? ` (${found.opened.size}: ${list(found.opened)})` : ''}`);
+  ok(!found.ids.size, `${tag}: no two elements share an id${found.ids.size ? ` (${list(found.ids)})` : ''}`);
   await ctx.close();
 }
 await browser.close();

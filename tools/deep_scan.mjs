@@ -14,10 +14,10 @@
 //   4. Gungnir   - the sketch's two blocks really are equal areas; the side switch
 //                  relabels the sketch and leaves the plaque's maths alone
 //   5. engine    - every preset loads; every allocation and estimator; vol targeting
-//                  hits its target; every crisis replay names itself; the cone, the
-//                  histogram and the headline agree; the same settings give the same number
+//                  hits its target; every crisis replay names itself; the cone and the
+//                  headline agree; the same settings give the same number
 //   6. book      - names leave as the book grows; the headline counts match the cards
-//   7. tabs      - all nine render; every drawer opens; Balance for every flyer
+//   7. tabs      - all six render; every drawer opens
 //   8. map       - Risk Topology: Run x3 under each calibration, long and short; ES >= VaR,
 //                  finite, breach a probability; overlays, explain mode, hover, pairings;
 //                  no demo wording on a live payload
@@ -40,6 +40,10 @@ const ok = (cond, name, note = '') => say(cond ? 'PASS' : 'FAIL', name, note);
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+// The cookie notice (static/dock.js) is answered the way a returning visitor
+// answered it: OK pressed. It is a fixed, informational layer, not what this
+// tool measures, and on a desktop it sits over the bottom-left corner.
+await page.addInitScript(() => { try { localStorage.setItem('meliona-cookie-notice', 'ok'); } catch (e) { /* blocked */ } });
 page.setDefaultTimeout(LIMIT);
 
 // ---- 1. boot: listen before the first byte ----------------------------------
@@ -52,6 +56,12 @@ page.on('requestfailed', r => {
   // A navigation away aborts in-flight fetches; that is not a defect.
   if (!/ERR_ABORTED/.test(why)) failedRequests.push(`${why} ${r.url().slice(0, 120)}`);
 });
+// The largest message the server sends: server.maxMessageSize caps it, and the
+// same cap bounds what one inbound message may unpack to (2026-11-13 audit).
+let wsLargest = 0;
+page.on('websocket', ws => ws.on('framereceived', f => {
+  wsLargest = Math.max(wsLargest, typeof f.payload === 'string' ? Buffer.byteLength(f.payload) : f.payload.length);
+}));
 
 // A rerun is finished when the status widget is gone AND no element is still
 // marked stale - checked twice, because the widget can blink off mid-run.
@@ -135,30 +145,26 @@ const figure = which => page.evaluate(w => {
   for (const gd of document.querySelectorAll('.js-plotly-plot')) {
     const d = gd.data || [];
     const hit = w === 'fan' ? d.some(t => t.name === 'median')
-      : w === 'hist' ? d.some(t => /simulations/.test(t.hovertemplate || ''))
       : w === 'rc' ? d.some(t => t.name === 'risk share') : false;
     // _fullData, not data: plotly.js 6 ships arrays base64-encoded ({dtype, bdata})
     // in .data and decodes them into _fullData.
-    if (hit) return { data: gd._fullData.map(t => ({ name: t.name, x: Array.from(t.x || []), y: Array.from(t.y || []) })),
-                      shapes: (gd.layout.shapes || []).map(s => ({ x0: s.x0, y0: s.y0 })) };
+    if (hit) return { data: gd._fullData.map(t => ({ name: t.name, x: Array.from(t.x || []), y: Array.from(t.y || []) })) };
   }
   return null;
 }, which);
 const last = a => a[a.length - 1];
 
-// The cone, the histogram and the headline are three views of ONE simulation.
+// The cone and the headline are two views of ONE simulation.
 // If they disagree, one of them is lying.
 async function coneAgrees(tag) {
   const v = pct(await verdict());
-  const fan = await figure('fan'), hist = await figure('hist');
-  if (!fan || !hist) return say('FAIL', `${tag}: cone/histogram present`, 'chart missing');
+  const fan = await figure('fan');
+  if (!fan) return say('FAIL', `${tag}: cone present`, 'chart missing');
   const p5 = last(fan.data[1].y), p50 = last(fan.data.find(t => t.name === 'median').y);
   const allFinite = fan.data.every(t => t.y.every(Number.isFinite));
   ok(allFinite, `${tag}: every cone value is finite`);
   // CVaR is the mean loss beyond the 5% frontier, so it sits at or beyond the cone's floor.
   ok(v >= -p5 - 0.06, `${tag}: CVaR ${v}% sits at or beyond the cone floor (VaR ${(-p5).toFixed(1)}%)`);
-  const cvLine = hist.shapes[0]?.x0;
-  ok(Math.abs(-cvLine - v) <= 0.06, `${tag}: histogram CVaR line = headline`, `line ${(-cvLine).toFixed(2)}% vs ${v}%`);
   const med = pct(await metric('Median 1-year return'));
   if (Number.isFinite(med)) ok(Math.abs(med - p50) <= 0.06, `${tag}: Risk Breakdown median = cone centreline`,
                                `${med}% vs ${p50.toFixed(2)}%`);
@@ -269,6 +275,7 @@ await step('glide', async () => {
     ['a.cta-btn[href="#the-slice"]', 'From the record to the allocation'],
     ['a.cta-btn[href="#engine"]', 'To the engine'],
     ['a[href="#analysis"]', 'Skip to the analysis'],
+    ['#hero a[href="#contact"]', 'Contact John'],
     ['.meliona-footer a[href="#grit-showcase"]', 'Footer: The Grit Zone'],
     ['.meliona-footer a[href="#crisis-record"]', 'Footer: Crisis Conviction'],
     ['.meliona-footer a[href="#engine"]', 'Footer: The engine'],
@@ -279,7 +286,7 @@ await step('glide', async () => {
 async function surface(tag) {
   // Measure every block in the state it lands in (static/reveal.js), not the
   // ones still waiting below the screen at opacity 0 - see device_check.mjs.
-  await page.evaluate(() => window.__melionaReveal?.revealAll());
+  await page.evaluate(() => { window.__melionaReveal?.revealAll(); window.__melionaNotice?.dismiss(); });
   const f = await page.evaluate(() => {
     const main = document.querySelector('[data-testid="stMain"]');
     const heads = [...main.querySelectorAll('h1, h2, .panel-head .t, summary, [data-testid="stMetricLabel"]')];
@@ -354,8 +361,8 @@ await step('gungnir', async () => {
   ok(a.w * a.h === b.w * b.h, 'Gungnir: the two blocks have equal area (w1 s1 = w2 s2)', `${a.w}x${a.h} vs ${b.w}x${b.h}`);
   ok(Math.max(a.w / b.w, b.w / a.w) === Math.max(a.h / b.h, b.h / a.h) && Math.max(a.w / b.w, b.w / a.w) === 3,
      'Gungnir: the sketch is the plaque\'s 3:1 sentence', 'three times as volatile gets one third the capital');
-  ok(/w1σ1=w2σ2|w1σ1\s*=\s*w2σ2/.test(g.plaque.replace(/block 0[12]|flyer|cushion/g, '').replace(/\s+/g, '')), 'Gungnir: plaque states w1σ1 = w2σ2');
-  ok(g.labels.includes('the high-flyer') && g.labels.includes('the steady cushion'), 'Gungnir: long-side labels on the sketch');
+  ok(/w1σ1=w2σ2|w1σ1\s*=\s*w2σ2/.test(g.plaque.replace(/block 0[12]|flyer|anchor/g, '').replace(/\s+/g, '')), 'Gungnir: plaque states w1σ1 = w2σ2');
+  ok(g.labels.includes('the high-flyer') && g.labels.includes('the steady anchor'), 'Gungnir: long-side labels on the sketch');
 });
 
 // ---- 5. engine ------------------------------------------------------------------
@@ -367,17 +374,17 @@ await step('engine baseline', async () => {
 });
 
 await step('allocation', async () => {
-  await openDrawer('Allocation: how capital');
-  for (const est of ['Sample: plain history', 'EWMA: reactive / panic lens', 'Ledoit-Wolf: steady (default)']) {
+  await openDrawer('Weights: how the money');
+  for (const est of ['Plain history (sample)', 'Quick to react (EWMA)', 'Steady (Ledoit-Wolf, default)']) {
     const prev = await verdict();
-    await pick('Covariance estimator', est);
+    await pick('How the names move together', est);
     await settle();
     const v = await verdict();
     ok(/^\d+(\.\d+)?%$/.test(v), `allocation: estimator "${est.split(' -')[0]}" gives a finite headline`, `${prev} -> ${v}`);
   }
   // Risk parity must make every risk share equal - that is its definition.
   let prev = await verdict();
-  await choose('Risk parity');
+  await choose('Equal risk (risk parity)');
   const rp = await newVerdict(prev);
   const rc = await figure('rc');
   const shares = rc.data.find(t => t.name === 'risk share').x;
@@ -392,15 +399,15 @@ await step('allocation', async () => {
   ok(Math.max(...ew) - Math.min(...ew) <= 0.05, 'allocation: equal weight gives equal dollar weights', `${ew.map(s => s.toFixed(1)).join('/')}%`);
   // Vol targeting: the realised vol of the scaled book should land on the target.
   prev = await verdict();
-  await choose('Target volatility');
+  await choose('Aim for a set level of yearly swings');
   await newVerdict(prev);
   await settle();
-  const vol = pct(await metric('Annualized volatility'));
+  const vol = pct(await metric('Volatility per year'));
   const s = await sentence();
   ok(Math.abs(vol - 10) <= 1.5, 'allocation: vol target 10% lands near 10% realised', `${vol}% realised`);
   ok(/levered \d+\.\d\d×/.test(s), 'allocation: the verdict names the leverage', (s.match(/levered [\d.]+×/) || [''])[0]);
   prev = await verdict();
-  await choose('Target volatility');
+  await choose('Aim for a set level of yearly swings');
   const back = await newVerdict(prev);
   ok(pct(back) === base.v, 'allocation: switching everything back restores the baseline exactly', `${back} vs ${base.v}%`);
 });
@@ -408,7 +415,7 @@ await step('allocation', async () => {
 await step('stress test', async () => {
   await openDrawer('Stress test: shock');
   // A deeper drawdown shock must not make the tail lighter.
-  const slider = page.getByRole('slider', { name: 'Market drawdown shock' }).first();
+  const slider = page.getByRole('slider', { name: 'Market fall over the year (%)' }).first();
   await slider.scrollIntoViewIfNeeded();
   let prev = await verdict();
   await slider.focus();
@@ -425,7 +432,7 @@ await step('stress test', async () => {
 
   if (!SCENARIO_LIST) return say('FAIL', 'stress: crisis list', 'SCAN_SCENARIOS not set');
   const scenarios = SCENARIO_LIST;
-  const engines = FULL ? ['Bootstrap (empirical)', 'Jump-diffusion (Merton)'] : ['Bootstrap (empirical)'];
+  const engines = FULL ? ['Real past days (bootstrap)', 'Real days plus sudden jumps (Merton)'] : ['Real past days (bootstrap)'];
   for (const eng of engines) {
     await choose(eng);
     await settle();
@@ -438,7 +445,7 @@ await step('stress test', async () => {
       const sen = await sentence(), v = await verdict();
       const days = (sen.match(/\((\d+) trading days\)/) || [])[1];
       // The verb follows the engine (ME-07): jump-diffusion replays nothing.
-      const jd = eng.startsWith('Jump');
+      const jd = eng.includes('jumps');
       const said = jd ? `calibrated to the actual returns of ${sc}` : `Replaying the actual returns of ${sc}`;
       ok(sen.includes(said) && /^-?\d+(\.\d+)?%$/.test(v),
          `stress [${eng.split(' ')[0]}]: ${sc} replays and names itself`, `CVaR ${v}, ${days} trading days`
@@ -448,15 +455,15 @@ await step('stress test', async () => {
       await coneAgrees(`${sc}`);
     }
   }
-  await pick('Scenario', 'Custom shock (sliders)');
-  await choose('Bootstrap (empirical)');
+  await pick('Scenario', 'My own shock (set it below)');
+  await choose('Real past days (bootstrap)');
   await settle();
   ok(pct(await verdict()) === base.v, 'stress: back to the base case restores the baseline exactly', await verdict());
   await shot('03-engine');
 });
 
 await step('every preset', async () => {
-  await openDrawer('Universe: which assets');
+  await openDrawer('Portfolio: which names');
   if (!PRESET_LIST) return say('FAIL', 'presets: list', 'SCAN_PRESETS not set');
   const names = PRESET_LIST;
   const list = FULL ? names : names.slice(0, 4);
@@ -482,10 +489,11 @@ await step('every preset', async () => {
 // ---- 6. the book ------------------------------------------------------------------
 async function bookState() {
   return page.evaluate(() => {
-    // A dossier card is the flex row whose first cell is its role label.
+    // A dossier card is a .book-row whose first cell is its role label; a lead
+    // or anchor row carries a third cell, its figure column (2026-11-17).
     const ROLES = ['Leads', 'Anchor', 'No role', 'Left out'];
-    const cards = [...document.querySelectorAll('[data-testid="stMarkdownContainer"] div')]
-      .filter(d => d.children.length === 2 && ROLES.includes(
+    const cards = [...document.querySelectorAll('[data-testid="stMarkdownContainer"] .book-row')]
+      .filter(d => d.firstElementChild?.classList.contains('book-role') && ROLES.includes(
         (d.firstElementChild.textContent || '').trim()
           .replace(d.firstElementChild.querySelector('.role-note')?.textContent.trim() || '', '').trim()));
     // the role cell holds the label, and on a NO ROLE card the weight it holds
@@ -499,11 +507,11 @@ async function bookState() {
              noteOk: cards.every(c => (lbl(c) === 'No role')
                === /^(\d+\.\d%|<0\.1%) of the book$/.test(note(c))),
              out: cards.filter(c => lbl(c) === 'Left out').length, total: cards.length, head,
-             outside: cards.filter(c => /outside the chosen universe/.test(c.textContent)).length };
+             outside: cards.filter(c => /from outside your list/.test(c.textContent)).length };
   });
 }
 await step('the book', async () => {
-  // "n of N names hold a position worth keeping" counts the LIQUIDITY gate:
+  // "n of N names can hold at least 1% of the book" counts the LIQUIDITY gate:
   // an eligible name can still hold no role for ranking below the cut, so
   // leaders + anchors <= eligible <= N. N is the visitor's own names (ME-08):
   // an outside anchor's card is on screen but not one of them, so it counts
@@ -540,15 +548,15 @@ await step('the book', async () => {
   const bf = await bookState();
   ok(bf.leads <= b0.leads, 'book: the grit floor can only narrow the leaders', `${b0.leads} -> ${bf.leads}`);
   await choose('Flyers must be in the grittiest half'); await settle();
-  await choose('Allow a defensive anchor from outside the universe'); await settle();
+  await choose('Allow a steady anchor from outside your list'); await settle();
   const bn = await bookState();
   ok(bn.outside === 0, 'book: with the outside anchor off, nothing from outside appears', `${bn.outside} outside cards`);
-  await choose('Allow a defensive anchor from outside the universe'); await settle();
+  await choose('Allow a steady anchor from outside your list'); await settle();
 });
 
-// ---- 7. tabs, drawers, Balance ----------------------------------------------------
-const TABS = ['Risk Topology', 'Risk Breakdown', 'Liquidity', 'Correlation Watch', 'Balance',
-              'Grit Zone', 'Crisis Conviction', 'Data Quality', 'Lineage & Audit'];
+// ---- 7. tabs, drawers ------------------------------------------------------------
+const TABS = ['Risk Topology', 'Risk Breakdown', 'Grit Zone', 'Crisis Conviction',
+              'Data Quality', 'Lineage & Audit'];
 async function openTab(name) {
   if (PROVENANCE.includes(name)) await openDrawer('Where the numbers come from');
   const t = page.getByRole('tab', { name, exact: true }).first();
@@ -558,7 +566,7 @@ await step('tabs', async () => {
   for (const name of TABS) {
     await openTab(name);
     const len = await page.evaluate(n => {
-      const t = [...document.querySelectorAll('[role="tab"]')].find(e => e.innerText.trim() === n);
+      const t = [...document.querySelectorAll('[role="tab"]')].find(e => e.textContent.trim() === n);
       const p = t && document.getElementById(t.getAttribute('aria-controls'));
       return p ? p.innerText.trim().length + p.querySelectorAll('iframe, canvas, svg').length * 100 : 0;
     }, name);
@@ -578,22 +586,6 @@ await step('tabs', async () => {
     if (len < 40) empty.push(label);
   }
   ok(!empty.length, 'every visible drawer opens onto content', empty.join(' | '));
-});
-
-await step('balance, every flyer', async () => {
-  await openTab('Balance');
-  const box = page.getByRole('combobox', { name: /High-flyer/ }).first();
-  await box.scrollIntoViewIfNeeded(); await box.click();
-  const flyers = (await page.getByRole('option').allTextContents()).map(s => s.trim());
-  await page.keyboard.press('Escape');
-  for (const f of (FULL ? flyers : flyers.slice(0, 3))) {
-    await pick('High-flyer (the volatile conviction position)', f); await settle();
-    const t = await page.evaluate(() => [...document.querySelectorAll('div')].map(d => d.textContent).find(s => /^Safety line: tail gap /.test(s)) || '');
-    const line = await page.evaluate(() => [...document.querySelectorAll('div')].map(d => d.textContent)
-      .find(s => /^Over the \d+ daily returns loaded/.test(s)) || '');
-    ok(/^Safety line: tail gap -?\d+(\.\d+)?% /.test(t) && /cushion/.test(line), `balance: flyer ${f} pairs and measures its cushion`,
-       `${t}; ${line.slice(0, 110)}`);
-  }
 });
 
 // ---- 8. Risk Topology ----------------------------------------------------------------
@@ -719,7 +711,7 @@ await step('short side', async () => {
   await page.waitForFunction(() => /short/i.test(document.querySelector('.verdict-sentence')?.textContent || ''));
   await settle();
   const g = await page.evaluate(() => [...document.querySelectorAll('.st-key-gungnir_zone svg text')].map(t => t.textContent));
-  ok(g.includes('the short position') && g.includes('the squeeze cushion'), 'short: the Gungnir sketch relabels');
+  ok(g.includes('the short position') && g.includes('the squeeze anchor'), 'short: the Gungnir sketch relabels');
   ok(/short book/.test(await page.textContent('#engine')), 'short: the engine heading says short book');
   say('INFO', 'short: headline', `${prev} -> ${await verdict()}`);
   await coneAgrees('short book');
@@ -738,6 +730,13 @@ const noise = s => /favicon|Failed to load resource: the server responded with a
 ok(!consoleErrors.filter(e => !noise(e)).length, 'no console or script errors from boot to finish', consoleErrors.slice(0, 4).join(' | '));
 ok(!badResponses.length, 'no request answered with an error status', badResponses.slice(0, 4).join(' | '));
 ok(!failedRequests.length, 'no request failed outright', failedRequests.slice(0, 4).join(' | '));
+{
+  const { readFileSync } = await import('node:fs');
+  const cfg = readFileSync(new URL('../.streamlit/config.toml', import.meta.url), 'utf8');
+  const capMb = Number((cfg.match(/^maxMessageSize\s*=\s*(\d+)/m) || [])[1]);
+  ok(wsLargest > 0 && wsLargest <= capMb * 1e6 / 2, 'the largest message keeps half the message cap free',
+     `${(wsLargest / 1e3).toFixed(0)} KB of a ${capMb} MB cap`);
+}
 await browser.close();
 
 const n = s => results.filter(r => r.status === s).length;

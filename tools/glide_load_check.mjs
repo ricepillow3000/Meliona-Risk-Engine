@@ -28,6 +28,7 @@ const LINKS = [
   ['a.cta-btn[href="#the-slice"]', 'From the record to the allocation'],
   ['a.cta-btn[href="#engine"]', 'To the engine'],
   ['a[href="#analysis"]', 'Skip to the analysis'],
+  ['#hero a[href="#contact"]', 'Contact John'],
   ['.meliona-footer a[href="#grit-showcase"]', 'Footer 01'],
   ['.meliona-footer a[href="#crisis-record"]', 'Footer 02'],
   ['.meliona-footer a[href="#engine"]', 'Footer 03'],
@@ -36,6 +37,10 @@ const LOADING = LINKS.slice(0, 5);     // the footer exists only once the run ha
 
 const b = await chromium.launch(process.env.CHROMIUM ? { executablePath: process.env.CHROMIUM } : {});
 const ctx = await b.newContext({ viewport: { width: 1440, height: 900 } });
+// The cookie notice (static/dock.js) is answered the way a returning visitor
+// answered it: OK pressed. It is a fixed, informational layer, not what this
+// tool measures, and on a desktop it sits over the bottom-left corner.
+await ctx.addInitScript(() => { try { localStorage.setItem('meliona-cookie-notice', 'ok'); } catch (e) { /* blocked */ } });
 const tally = {}, fails = [], waits = {};
 
 async function sample(page, id, ms) {

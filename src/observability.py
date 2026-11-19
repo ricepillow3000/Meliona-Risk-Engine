@@ -1,42 +1,48 @@
 """
-Crash reporting for a single-process public app - the beta-test wire.
+crash reporting for a single-process public app, no vendor sdk.
 
-What a hosted crash reporter (Sentry, Crashlytics) buys you is: a stack trace,
-a way to tell WHICH user hit it, and a way to find it again later. This does
-the same three things with the standard library and no third-party SDK, which
-matters here for a specific reason: an SDK that ships user data to a vendor is
-exactly what the privacy note promises this app does not do. No account, no
-device id, no analytics beacon - so the crash wire stays local too.
+a hosted crash reporter gives you a stack trace, which user hit it, and a way
+to find it later. this does the same 3 things with the stdlib. no sdk on
+purpose: shipping user data to a vendor is exactly what the privacy note says
+we don't do. no account, no device id, no beacon - so crashes stay local too.
 
-How it works:
-- `setup_logging()` attaches a size-capped rotating file handler to the ROOT
-  logger, so it captures this engine's own log lines AND the tracebacks
-  Streamlit already logs when a script run raises. Nothing is instrumented
-  twice; the exception path that already exists just lands in a file.
-- Every browser session gets a short `session_ref`. It is random, tied to no
-  identity, and printed in the page footer. A user emailing support quotes it;
-  the operator greps for it and gets that session's lines including the
-  traceback. That is the whole correlation story - no cookie, no fingerprint.
-- `log_incident()` records a handled failure with the same ref, so degraded
-  features (a feed timeout, a refused calibration) leave a trail even when the
-  page recovered and the visitor saw a friendly message.
+- `setup_logging()` puts a size-capped rotating file on the ROOT logger, so it
+  catches our own lines and the tracebacks streamlit already logs. nothing is
+  logged twice.
+- every browser session gets a random `session_ref`, tied to nobody, shown in
+  the footer. a user emails it to support, we grep for it. no cookie needed.
+- `log_incident()` logs a handled failure under that ref, so a degraded
+  feature leaves a trail even when the visitor just saw a friendly message.
 
-Retention: files are capped by size and count below. They hold ticker symbols
-and stack traces - no personal data - and rotate away on their own.
+logs are capped by size and count, hold tickers and tracebacks (no personal
+data) and rotate away on their own.
+
+usage counts work the same way: two in-memory counters (sessions today, utc,
+and how many sessions opened each preset), written as ONE summary line to the
+host log at most once an hour, at the first event after utc midnight (the
+finished day) and on exit. no sdk, cookie, session ref or ip, and preset names
+only from the app's closed list so a typed ticker can never get counted.
+PRIVACY.md "Analytics" says exactly this.
 """
 
+import atexit
 import logging
 import os
+import re
 import secrets
 import sys
+import threading
+import time
 import traceback
+from collections import Counter
+from collections.abc import Callable, Container
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "logs")
 LOG_FILE = os.path.join(LOG_DIR, "meliona.log")
 
-# Small on purpose: this is a diagnostic tail, not an archive, and the host is
-# an ephemeral free-tier disk that the cache budget already shares.
+# small on purpose: a debug tail, not an archive, on a tiny disk the cache shares
 MAX_BYTES = 1_000_000
 BACKUP_COUNT = 3
 
@@ -45,22 +51,37 @@ _FORMAT = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
 _configured = False
 
 
+# settings that reach html, a mailto link or robots.txt: anything not shaped
+# like one is ignored, so a stray quote or newline can't break the page
+_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
+SHAPES = {
+    "SUPPORT_EMAIL": _EMAIL,
+    "CONTACT_EMAIL": _EMAIL,
+    "SUPPORT_PHONE": r"[0-9 ()+.-]{7,20}|off|none|0",
+    "SITE_URL": r"https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?",
+}
+
+
 def host_setting(name: str, default: str = "") -> str:
-    """The host's MELIONA_<name> variable. The name was spelled Meleona until
-    2026-10-28; a variable set on the host under that spelling still counts, so
-    the rename cannot quietly disarm the kill switch."""
-    return os.getenv(f"MELIONA_{name}") or os.getenv(f"MELEONA_{name}") or default
+    """the host's MELIONA_<name> variable. the old MELEONA_ spelling still
+    counts, so the rename can't quietly turn off the kill switch."""
+    value = os.getenv(f"MELIONA_{name}") or os.getenv(f"MELEONA_{name}") or default
+    shape = SHAPES.get(name)
+    if value != default and shape and not re.fullmatch(shape, value.strip(), re.IGNORECASE):
+        logging.getLogger("meliona.config").warning(
+            "MELIONA_%s ignored: not shaped like one; using the default", name)
+        return default
+    return value.strip() if shape else value
 
 
 def setup_logging(level: int = logging.INFO) -> str:
     """
-    Attach the rotating file handler (and an errors-only stream to the
-    host's log) once per process. Returns the log path.
+    attach the rotating file (plus errors-only to the host's log) once per
+    process. returns the log path.
 
-    Safe to call on every Streamlit rerun - the second call is a no-op, which
-    is why the guard exists: Streamlit re-executes the whole script on every
-    widget interaction, and re-adding a handler each time would multiply every
-    line and rotate the file away in minutes.
+    streamlit reruns the whole script on every click, so without the guard
+    we'd add a handler each time, multiply every line and rotate the file
+    away in minutes.
     """
     global _configured
     if _configured:
@@ -72,10 +93,8 @@ def setup_logging(level: int = logging.INFO) -> str:
     handler.setLevel(level)
     root = logging.getLogger()
     root.addHandler(handler)
-    # Errors also go to the host's log stream (2026-11-04 security review):
-    # the disk under logs/ is wiped by every redeploy, which took the
-    # tracebacks RUNBOOK §3 triages with it. Errors only - session starts stay
-    # on disk - and Streamlit already writes its own server errors there.
+    # errors also go to the host log: every redeploy wipes logs/, and the
+    # runbook needs those tracebacks. errors only - session starts stay on disk.
     stream = logging.StreamHandler(sys.stderr)
     stream.setFormatter(logging.Formatter(_FORMAT))
     stream.setLevel(logging.ERROR)
@@ -87,7 +106,7 @@ def setup_logging(level: int = logging.INFO) -> str:
 
 
 def new_session_ref() -> str:
-    """A short, random, identity-free handle for one browser session."""
+    """a short random handle for one browser session, tied to nobody."""
     return secrets.token_hex(4).upper()
 
 
@@ -98,8 +117,8 @@ def log_session_start(session_ref: str, detail: str = "") -> None:
 
 def log_incident(session_ref: str, where: str, exc: BaseException) -> str:
     """
-    Record a handled failure against a session ref. Returns the ref so the UI
-    can show it: "something broke, quote REF when you email support".
+    log a handled failure under a session ref. returns the ref so the ui can
+    say "something broke, quote REF when you email support".
     """
     logging.getLogger("meliona.incident").error(
         "ref=%s where=%s %s: %s\n%s", session_ref, where,
@@ -108,10 +127,139 @@ def log_incident(session_ref: str, where: str, exc: BaseException) -> str:
     return session_ref
 
 
+def log_no_data(session_ref: str, where: str) -> None:
+    """a typed basket yahoo had nothing for: a typo, not an incident. one INFO
+    line, no traceback, so a script rerunning it can't bury real errors."""
+    logging.getLogger("meliona.session").info("ref=%s where=%s no data", session_ref, where)
+
+
+USAGE_EVERY_S = 3600       # one summary line an hour, max
+
+# the usage line gets its own logger: INFO straight to the host's stderr, not
+# the root's handlers (logs/ is wiped on redeploy, the root stream is errors only)
+class _HostStream(logging.StreamHandler):
+    """whatever stderr is when the line is written, not when we were made:
+    the exit flush runs after a test runner already closed the one it lent."""
+
+    @property
+    def stream(self):
+        return sys.stderr
+
+    @stream.setter
+    def stream(self, _value):
+        pass
+
+
+usage_log = logging.getLogger("meliona.usage")
+if not usage_log.handlers:
+    _uh = _HostStream()
+    _uh.setFormatter(logging.Formatter(_FORMAT))
+    _uh.setLevel(logging.INFO)
+    usage_log.addHandler(_uh)
+    usage_log.setLevel(logging.INFO)
+    usage_log.propagate = False
+
+
+def _utc_day(t: float) -> str:
+    return datetime.fromtimestamp(t, timezone.utc).date().isoformat()
+
+
+class UsageCounter:
+    """
+    today's anonymous totals, in memory: sessions started and preset picks.
+
+    nothing here identifies anyone. a session is just +1 (its ref never comes
+    here) and a preset only counts if it's in the closed list `known`, so a
+    typed ticker or a forged url param gets dropped. streamlit runs each
+    session on its own thread, hence the lock.
+
+    no timer thread: we read the clock on each event. an event an hour+ after
+    the last line writes the running totals, the first event of a new utc day
+    writes the finished day and resets, and `flush()` (at exit) writes the rest.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.time,
+                 write: Callable[[str], None] | None = None,
+                 every_s: float = USAGE_EVERY_S):
+        self._clock, self._every = clock, every_s
+        self._write = write or usage_log.info
+        self._lock = threading.Lock()
+        self._day: str | None = None
+        self._sessions = 0
+        self._presets: Counter = Counter()
+        self._last = 0.0
+        self._dirty = False
+
+    def session(self) -> None:
+        """one browser session started."""
+        self._count(None)
+
+    def preset(self, name: str, known: Container[str]) -> None:
+        """a session opened this preset. only a name in `known` counts."""
+        if isinstance(name, str) and name in known:
+            self._count(name)
+
+    def line(self) -> str:
+        with self._lock:
+            return self._line()
+
+    def flush(self) -> None:
+        """write the running totals if anything got counted since the last line."""
+        with self._lock:
+            out = self._line() if self._dirty else None
+            self._dirty = False
+            self._last = self._clock()
+        if out:
+            self._write(out)
+
+    def _line(self) -> str:
+        top = sorted(self._presets.items(), key=lambda kv: (-kv[1], kv[0]))
+        presets = ", ".join(f"{k} {v}" for k, v in top) or "none"
+        n = self._sessions
+        return f"usage {self._day}: {n} session{'' if n == 1 else 's'}; presets: {presets}"
+
+    def _count(self, preset: str | None) -> None:
+        now = self._clock()
+        day = _utc_day(now)
+        out = []
+        with self._lock:
+            if self._day is None:
+                self._day, self._last = day, now
+            elif day != self._day:
+                if self._dirty:
+                    out.append(self._line())          # the finished day's total
+                self._day, self._sessions, self._presets = day, 0, Counter()
+                self._last = now
+            if preset is None:
+                self._sessions += 1
+            else:
+                self._presets[preset] += 1
+            self._dirty = True
+            if now - self._last >= self._every:
+                out.append(self._line())
+                self._last, self._dirty = now, False
+        for ln in out:
+            self._write(ln)
+
+
+usage = UsageCounter()
+atexit.register(usage.flush)         # a redeploy keeps its last hour (only if something was counted)
+
+
+def count_session() -> None:
+    """main.py, where a session's ref is made: one session started."""
+    usage.session()
+
+
+def count_preset(name: str, known: Container[str]) -> None:
+    """main.py, once per session per preset it opens."""
+    usage.preset(name, known)
+
+
 def recent_incidents(limit: int = 20) -> list[str]:
     """
-    Operator helper: the last incident lines, newest last. Used by the
-    runbook's triage step and by the test that proves the wire is live.
+    operator helper: the last incident lines, newest last. the runbook's
+    triage step uses it, and so does the test that proves the wire works.
     """
     if not os.path.exists(LOG_FILE):
         return []
@@ -130,5 +278,13 @@ if __name__ == "__main__":
         log_incident(ref, "__main__ smoke test", exc)
     found = [ln for ln in recent_incidents() if ref in ln]
     assert found, "incident did not reach the log"
+    lines: list[str] = []
+    t = [datetime(2026, 11, 4, 23, 30, tzinfo=timezone.utc).timestamp()]
+    u = UsageCounter(clock=lambda: t[0], write=lines.append)
+    u.session(); u.preset("Mag-7", {"Mag-7"}); u.preset("NVDA", {"Mag-7"})
+    t[0] += 3600
+    u.session()
+    assert lines == ["usage 2026-11-04: 1 session; presets: Mag-7 1"], lines
+    print("usage line:", lines[-1])
     print(f"crash wire live: {path}")
     print(found[-1][:120])
