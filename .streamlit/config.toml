@@ -32,6 +32,11 @@ maxUploadSize = 1
 # unpack to 16 MB before serve.py refuses it. The deep scan fails if a message
 # ever takes more than half the cap.
 maxMessageSize = 1
+# Streamlit 1.67's experimental agent API lets a script drive the app over
+# HTTP or MCP at /_stcore/agent/. Off by default; pinned off by name so a
+# release that flips the default cannot open it, and serve.py answers 404
+# there either way (test_streamlits_agent_api_stays_off_and_out_of_reach).
+enableAgentApi = false
 # Serves ./static/ at /app/static/ (path-traversal safe, nosniff) - locally and
 # on Railway. The photos (and reveal.js) live there as files: inlined as base64
 # they were ~5 MB on the websocket AHEAD of the boot skeleton, which then
