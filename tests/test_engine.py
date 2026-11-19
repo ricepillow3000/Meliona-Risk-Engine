@@ -6996,7 +6996,12 @@ def test_the_phone_shortcut_flies_to_the_engine_and_never_covers_it():
         assert own not in js, f"dock.js scrolls the page itself ({own}): the glide is the one routine"
     # shown between the hero's button and the engine, by observers
     assert "new IntersectionObserver" in js and "'#hero .cta-btn'" in js
-    assert "heroGone && engineAhead" in js and "r.bottom <= 0" in js and "r.top >= vh" in js
+    assert "heroGone && engineAhead" in js and "bottom <= 0" in js
+    # a jump past the small engine heading must still take the bar away
+    # (2026-11-19): the engine's observer counts everything above the screen's
+    # bottom edge as in, on the page's own scroller, so any crossing flips it
+    assert "rootMargin: ALL_ABOVE" in js and "engineAhead = !e.isIntersecting" in js
+    assert "root: sc" in js and "'[data-testid=\"stMain\"]'" in js
     assert "(max-width: 640px)" in js, "the bar is for phones only"
     # outside Streamlit's tree: nothing main.py writes, and not a block reveal.js hides
     assert "m-dock" not in main and "m-stack" not in main

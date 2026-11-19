@@ -279,6 +279,7 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 - **The map on a phone** spans the screen 8px from each edge. On frames of 520px or less the map comes first and its x-axis is on the first screen. The pairing SVG scales down. A touch picks the nearest dot. — John saw it cut off on his iPhone, 2026-10-17 — map_layout (`m414/m374/m359/m320`); site_check; `test_map_names_the_dot_under_the_finger_not_the_first_one_near_it`.
 - **On a phone, blocks only rise** (headings still slide from the left), so nothing can open a sideways scroll.
 - **Phone shortcut:** at 640px and under, a slim stone bar "Run the risk engine" appears only after the hero's button has left the screen, and goes as soon as the engine is on screen. It never covers the verdict, the Book or the tabs. — John, 2026-11-04 — `test_the_phone_shortcut_flies_to_the_engine_and_never_covers_it`; site_check.
+  - It also goes after a jump straight past the engine (a fling, a link or a key that carries the small heading from below the screen to above it between two frames): the engine's own observer counts everything above the screen's bottom edge as in, on the page's scroller. — it stayed over the tabs, 2026-11-19 — site_check ("gone after a jump straight past the engine to the tabs").
 - **No hamburger menu.** The tab strip scrolls sideways with a labelled button. — LAUNCH_CHECKLIST #160.
 - **Nothing is pinned to the bottom except the dock**, so the keyboard never covers a field.
 - **iPhones show the press state** thanks to an empty passive `touchstart` listener.

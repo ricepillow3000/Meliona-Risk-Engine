@@ -123,6 +123,21 @@ for (const [label, w, h] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
         hash: location.hash, up: !!window.__melionaNotice?.dock() }));
       ok(after.top >= 0 && after.top <= 80 && !after.hash, `phone: the shortcut glides to the engine (heading ${after.top.toFixed(0)}px from the top${after.hash ? `, hash ${after.hash}` : ''})`);
       ok(!after.up, 'phone: shortcut gone once the engine is on screen');
+      // A jump (a fling, a link, a key) can carry the small engine heading from
+      // below the screen to above it between two frames, so it is never seen
+      // on screen. The bar must still go, and come back on the way up
+      // (2026-11-19: it stayed over the tabs).
+      const jump = (to) => page.evaluate((to) => {
+        const sc = document.querySelector('[data-testid="stMain"]'), e = document.getElementById('engine');
+        const at = to === 'tabs' ? document.querySelector('[data-testid="stTabs"]') : e;
+        sc.style.scrollBehavior = 'auto';
+        sc.scrollTop += at.getBoundingClientRect().top + (to === 'tabs' ? 0 : -1.5 * innerHeight);
+        sc.style.scrollBehavior = '';
+      }, to);
+      await jump('above'); await page.waitForTimeout(600);
+      ok(await page.evaluate(() => !!window.__melionaNotice?.dock()), 'phone: shortcut back between the hero and the engine');
+      await jump('tabs'); await page.waitForTimeout(600);
+      ok(await page.evaluate(() => !window.__melionaNotice?.dock()), 'phone: shortcut gone after a jump straight past the engine to the tabs');
       await page.click('.m-notice-ok');
       const said = await page.evaluate(() => ({ shown: !!document.querySelector('.m-notice'),
         kept: (() => { try { return localStorage.getItem('meliona-cookie-notice'); } catch (e) { return 'blocked'; } })() }));
