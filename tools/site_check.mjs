@@ -134,10 +134,15 @@ for (const [label, w, h] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
         sc.scrollTop += at.getBoundingClientRect().top + (to === 'tabs' ? 0 : -1.5 * innerHeight);
         sc.style.scrollBehavior = '';
       }, to);
+      // New on 2026-11-19: like the dock itself, required of this commit's own
+      // app (step 8) and of main; on a branch's step 5 the deployed site still
+      // runs the old build, so there it is reported, not required.
+      const fresh = (cond, msg) => (!cond && process.env.DOCK === 'optional')
+        ? console.log(`INFO  ${msg}: not yet on this deployment (DOCK=optional)`) : ok(cond, msg);
       await jump('above'); await page.waitForTimeout(600);
       ok(await page.evaluate(() => !!window.__melionaNotice?.dock()), 'phone: shortcut back between the hero and the engine');
       await jump('tabs'); await page.waitForTimeout(600);
-      ok(await page.evaluate(() => !window.__melionaNotice?.dock()), 'phone: shortcut gone after a jump straight past the engine to the tabs');
+      fresh(await page.evaluate(() => !window.__melionaNotice?.dock()), 'phone: shortcut gone after a jump straight past the engine to the tabs');
       // Every chart in a tab is drawn at its box's width once the tab is open
       // (2026-11-19: drawn at Plotly's 700px fallback, clipped on a phone).
       for (const t of ['Risk Breakdown', 'Grit Zone']) {
@@ -146,7 +151,7 @@ for (const [label, w, h] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
         const w = await page.evaluate(() => [...document.querySelectorAll('[role="tabpanel"]:not([hidden]) .js-plotly-plot')]
           .filter(g => g.offsetParent).map(g => [Math.round(g.querySelector('svg.main-svg').getBoundingClientRect().width),
             Math.round(g.getBoundingClientRect().width)]));
-        ok(w.length && w.every(([s, b]) => Math.abs(s - b) <= 2), `phone: ${t}: every chart drawn at its box's width (${w.map(x => x.join(' in ')).join(', ')})`);
+        fresh(w.length && w.every(([s, b]) => Math.abs(s - b) <= 2), `phone: ${t}: every chart drawn at its box's width (${w.map(x => x.join(' in ')).join(', ')})`);
       }
       await page.click('.m-notice-ok');
       const said = await page.evaluate(() => ({ shown: !!document.querySelector('.m-notice'),
