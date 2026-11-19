@@ -15,6 +15,16 @@ Paste this into a new chat session to bring it up to speed instantly.
   tests) and the front end (`main.py`, `hero.py`, `static/`, `public/`).
   Before touching a file the other side owns, say so in the PR. Start every
   branch from the latest `main`; nothing is waiting on any branch.
+- **2026-11-19, Risk by name is a dumbbell (front-end session, ME-34):**
+  the idea John deferred on 11-17 ("worth a later look"). The grouped bars
+  drew two bars per name, and under equal weight every gold bar was the
+  same length. Now one row per name: a gold square at its share of the
+  money, a dark diamond at its share of the swings, a bronze hairline
+  between them, largest risk share on top; the chart is 30px a name, not
+  46. Same numbers (`risk_contributions` on the base weights); the trace
+  names `dollar weight` and `risk share` stay because deep_scan reads them
+  (`risk_by_name_fig` in `main.py`;
+  `test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares`).
 - **2026-11-12/13, front-end session (PRs #63, #69, #70):** John's story
   and the five answers rewritten to read aloud (shorter sentences, no
   advice, no forecast); bloated captions cut to 45 words or fewer

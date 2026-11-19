@@ -41,6 +41,7 @@ fetch from a host outside the network policy.
   (`test_the_books_figure_column_repeats_only_its_sentence`).
 - **Watermelon FAQ block** - the five questions are native `<details>` rows, closed at
   first (`test_the_faq_is_five_questions_a_reader_opens`).
+- **Risk by name as a dumbbell** (2026-11-19, turned down on 11-17 as "worth a later look", then built) - one row per name, gold square = money share, dark diamond = risk share, a hairline between; the trace names stay for deep_scan (`risk_by_name_fig` in `main.py`; `test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares`).
 
 ## Rules for anything new from these sources
 
@@ -65,5 +66,4 @@ Watermelon stats cards (gradients, glow, a wall of cards); numbered FAQ rows (a 
 list that is not a sequence reads as generated); Kokonut Liquid Glass, Card Flip, Particle
 and Gradient buttons; Bklit gradient areas, crosshair (the page turned spikes off) and glass
 pills; Motion Primitives Tilt, Spotlight, Glow, Border Trail, Magnetic, Infinite Slider and
-Text Roll; a dumbbell for "Risk by name" (worth a later look: it rewires a chart the deep
-scan reads).
+Text Roll.
