@@ -35,11 +35,12 @@ from src.pairing import DEFENSIVE_ANCHOR_TICKERS
 from src.covariance import estimate_covariance, TRADING_DAYS
 from src.topology import build_map_payload, war_room_html
 from src.observability import (count_preset, count_session, host_setting, log_incident,
-                               log_session_start, new_session_ref, setup_logging)
+                               log_no_data, log_session_start, new_session_ref, setup_logging)
 from src.scenarios import HISTORICAL_REGIMES, replay_returns
 from hero import (N_PATHS, CONTACT_MAX, CONTACT_NAME_MAX, CONTACT_TOPICS, RESPONSE_TIME,
                   RESPONSE_WINDOW, about_html, contact_mailto, crest_engraving, faq_html, story_html,
-                  hero_html, profile_marks, LINKEDIN_URL, CONTACT_EMAIL as _CONTACT_DEFAULT)
+                  hero_html, profile_marks, LINKEDIN_URL, PRIVACY_URL,
+                  CONTACT_EMAIL as _CONTACT_DEFAULT)
 from src.liquidity import (days_to_liquidate, liquidity_profile,
                            liquidity_adjusted_cvar)
 from src.grit import grit_scores, MIN_HISTORY_DAYS
@@ -716,7 +717,7 @@ def _style_fig(fig, height: int = 300):
     return fig
 
 
-def fan_chart(bands: dict):
+def fan_chart(bands: dict, cvar: float | None = None):
     """
     Monte Carlo outcome cone: median path + 25-75 and 5-95 percentile bands.
 
@@ -775,9 +776,56 @@ def fan_chart(bands: dict):
     )
     fig = _style_fig(fig, height=360)
     fig.update_layout(hoverlabel=dict(namelength=0))
+    # The cone says its own numbers (Bklit UI's end labels and reference mark,
+    # John 2026-11-17): the day-252 best 5, median and worst 5, each the
+    # engine's percentile, and the headline CVaR on the same scale - the
+    # average of the years below the worst-5 edge, so it sits under it.
+    end = d[-1]
+    for key in ("p95", "p50", "p5"):
+        v = float(p(bands[key])[-1])
+        fig.add_annotation(x=end, y=v, text=f"{v:.1f}%", xanchor="left", xshift=6,
+                           showarrow=False, font=dict(size=12, color="#5D574D"))
+    if cvar is not None and cvar > 0:
+        y = -float(f"{cvar * 100:.1f}")                  # exactly what the headline prints
+        fig.add_shape(type="line", x0=end * 0.9, x1=end, y0=y, y1=y,
+                      line=dict(color=CHARCOAL, width=1.5))
+        fig.add_annotation(x=end, y=y, text=f"<b>Bad-year loss {cvar:.1%}</b>", xanchor="right",
+                           yanchor="top", yshift=-3, showarrow=False,
+                           font=dict(size=12, color=CHARCOAL))
+    # the labels sit in the right margin; the axis still ends on the last day
+    fig.update_layout(margin=dict(r=56))
+    fig.update_xaxes(range=[d[0], end])
     # Aerodynamic axes: no tick spikes, breathing gridlines only
     fig.update_xaxes(ticks="", showspikes=False)
     fig.update_yaxes(ticks="", ticksuffix="%")
+    return fig
+
+
+def risk_by_name_fig(rc: pd.DataFrame):
+    """Risk by name as a dumbbell: each name's share of the money and its share
+    of the swings sit on one line, so the gap between them is the line's length."""
+    rc = rc.sort_values("risk_pct")          # plotly draws the first row at the bottom
+    names = list(rc.index)
+    w, r = rc["weight"].values * 100, rc["risk_pct"].values * 100
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=[v for a, b in zip(w, r) for v in (a, b, None)],
+        y=[v for n in names for v in (n, n, None)],
+        mode="lines", name="gap", line=dict(color=BRONZE, width=2),
+        hoverinfo="skip", showlegend=False))
+    fig.add_trace(go.Scatter(
+        x=w, y=names, mode="markers", name="dollar weight",
+        marker=dict(symbol="square", size=11, color=GOLD, line=dict(width=0)),
+        hovertemplate="%{y} weight: %{x:.1f}%<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=r, y=names, mode="markers", name="risk share",
+        marker=dict(symbol="diamond", size=13, color=STONE, line=dict(width=0)),
+        hovertemplate="%{y} risk: %{x:.1f}%<extra></extra>"))
+    fig = _style_fig(fig, height=max(200, 30 * len(rc) + 80))
+    fig.update_layout(showlegend=True, xaxis_title_text="% of portfolio",
+                      legend=dict(orientation="h", y=1.14, x=0, font=dict(size=11)))
+    fig.update_xaxes(rangemode="tozero")
+    fig.update_yaxes(type="category")
     return fig
 
 
@@ -1058,8 +1106,8 @@ with _gungnir_zone:
                  "Borrowing fees, margin interest and forced buy-backs are not "
                  "included, so a real short would do worse than shown.")
 bearish = direction.startswith("Bearish")
-_bv_sk_a, _bv_sk_b = ("the short position", "the squeeze cushion") if bearish \
-    else ("the high-flyer", "the steady cushion")
+_bv_sk_a, _bv_sk_b = ("the short position", "the squeeze anchor") if bearish \
+    else ("the high-flyer", "the steady anchor")
 # Geometry note: the tether line runs CIRCUMFERENCE to CIRCUMFERENCE - its
 # endpoints sit on each circle's edge plus a 4px breath, never inside. All
 # labels are sized against the chord width where they sit, so nothing
@@ -1095,14 +1143,14 @@ with _gungnir_zone:
         f'<text x="268" y="184" text-anchor="middle" font-family="Georgia" font-size="11.5" fill="#5D574D">{_bv_sk_a}</text>'
         f'</svg>'
         f'<div style="font-family:Georgia;font-size:13px;color:#5D574D;max-width:560px;margin:2px auto 0;">'
-        f'{"Shorting flips the sketch: the tall block is the stock you bet against, the wide one a stock you own that tends to rise with it, softening a sudden jump. The areas match, so each carries the same share of the risk. A short can lose more than 100%, and borrowing costs are not included." if bearish else "The flyer is narrow and tall: little money, big price swings. The cushion is wide and short: more money, small swings. The areas match, so each name carries the same share of the risk."}'
+        f'{"Shorting flips the sketch: the tall block is the stock you bet against, the wide one a stock you own that tends to rise with it, softening a sudden jump. The areas match, so each carries the same share of the risk. A short can lose more than 100%, and borrowing costs are not included." if bearish else "The flyer is narrow and tall: little money, big price swings. The anchor is wide and short: more money, small swings. The areas match, so each name carries the same share of the risk."}'
         f'</div>'
         f'<a href="#engine" class="cta-btn" style="margin-top:14px;">'
         f'To the engine<span class="cta-arrow" aria-hidden="true"><svg viewBox="0 0 16 30" fill="none" xmlns="http://www.w3.org/2000/svg"><path class="shaft" d="M8 1 V22" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path class="head" d="M2.5 16.5 L8 22.5 L13.5 16.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a>'
         f'</div>',
         unsafe_allow_html=True)
     # Overwhelm audit (2026-10-29): the sketch and the equation stay - they draw
-    # the flyer-and-cushion pairing, the linkage the product is built on. The
+    # the flyer-and-anchor pairing, the linkage the product is built on. The
     # dense paragraph under them (equal risk contribution, correlation
     # cancelling, the covariance matrix) went: the engine below does that work.
     with _gg_plaque:
@@ -1113,7 +1161,7 @@ with _gungnir_zone:
         f'<span class="c">flyer</span></span>'
         f'<span class="gplaque-eqs">=</span>'
         f'<span class="gplaque-term"><span class="t">w<sub>2</sub>&sigma;<sub>2</sub></span>'
-        f'<span class="c">cushion</span></span>'
+        f'<span class="c">anchor</span></span>'
         f'</div>'
         f'<div class="gplaque-read">Money in a name (w) times how much its price '
         f'swings (&sigma;, volatility) is the same for both: a stock that swings '
@@ -1144,12 +1192,12 @@ st.markdown(
     'Yahoo Finance carries.</li>'
     '<li>Replay a real crisis or move the sliders, and watch the big number '
     'move.</li>'
-    '<li>Read the big number. It answers one question: in a bad year, the '
-    'worst 5 of every 100 simulated years, how much does this portfolio lose '
-    'on average? Everything below it shows the working.</li>'
+    '<li>Read the big number: the average loss in the worst 5 of every 100 '
+    'simulated years. Everything below it shows the working.</li>'
     '</ol>'
     '<div class="orient-f">Nothing here is advice. Every number is computed '
-    'from live end-of-day prices, and every tab shows its method.</div>'
+    'from live end-of-day prices, and every tab shows its method. Like any '
+    'model, it simplifies, so read each number as an estimate.</div>'
     '</div>',
     unsafe_allow_html=True)
 
@@ -1197,7 +1245,10 @@ with st.expander("Portfolio: which names to test", expanded=False):
              "(for example BRK-B, EURUSD=X for a currency, GC=F for gold).",
     )
 
-_raw_syms = sorted({t.strip().upper() for t in chosen if t.strip()})
+# Widget state arrives from the visitor's browser, so a script can send any
+# list: cut it to 4x the cap before any per-name work (security review,
+# 2026-11-12). Past 25 the page already refuses, and says so below.
+_raw_syms = sorted({t.strip().upper() for t in list(chosen)[:4 * MAX_UNIVERSE] if t.strip()})
 # The ticker box takes free text, and ticker names get interpolated into
 # unsafe_allow_html blocks downstream (the headline verdict names excluded
 # symbols inside a <div>). Reject anything not shaped like a Yahoo symbol
@@ -1347,10 +1398,15 @@ try:
 except NoDataError as exc:
     # A visitor's typo is not a crash: say what to do, not "quote a reference".
     # NoDataError messages are written for visitors (src/ingestion.py).
-    log_incident(SESSION_REF, "load_universe", exc)
-    # Every name came from a preset, so nothing was typed and "check the
-    # spelling" points the wrong way: the feed is the likely cause.
-    st.error(FEED_DOWN_MSG if set(tickers) <= set(PRESETS[preset]) else str(exc))
+    if set(tickers) <= set(PRESETS[preset]):
+        # Every name came from a preset, so nothing was typed and "check the
+        # spelling" points the wrong way: the feed is down, an incident.
+        log_incident(SESSION_REF, "load_universe", exc)
+        st.error(FEED_DOWN_MSG)
+    else:
+        # A typo: one quiet line, so a script can't bury real errors.
+        log_no_data(SESSION_REF, "load_universe")
+        st.error(str(exc))
     st.stop()
 except Exception as exc:  # noqa: BLE001 - surface any fetch failure to the user
     st.error(f"Couldn't load market data: {safe_err('couldn-t-load-market-data', exc)}")
@@ -1459,7 +1515,8 @@ with deck_alloc, st.expander("Weights: how the money is split",
     COV_PLAIN = {
         "Ledoit-Wolf": "Smooths out the noise in the price history",
         "Sample": "Uses the price history exactly as it is",
-        "EWMA": "Weighs the last few weeks most, so one bad day moves it a lot",
+        "EWMA": "Recent days count most and older days fade out, so one bad day "
+                "moves it a lot",
     }
     cov_method = st.selectbox(
         "How the names move together", ["Ledoit-Wolf", "Sample", "EWMA"],
@@ -1467,9 +1524,10 @@ with deck_alloc, st.expander("Weights: how the money is split",
         help="How the engine measures the way these names move together (their "
              "covariance), which sets the weights. Ledoit-Wolf (default) pulls "
              "noisy history toward a steadier estimate. Sample uses history as it "
-             "is. EWMA (RiskMetrics, λ=0.94) leans hard on the last few weeks, so "
-             "one bad day moves it a lot: use it to see the panic view, not as a "
-             "default.")
+             "is. EWMA means a weighted average where recent days count most and "
+             "older days fade out (exponentially weighted moving average; "
+             "RiskMetrics, λ=0.94), so one bad day moves it a lot: use it to see "
+             "the panic view, not as a default.")
     cov, cov_info = estimate_covariance(returns, cov_method)  # annualized risk matrix
     st.caption(f"{COV_PLAIN[cov_method]}. Method: {cov_info}.")
     if cov_method == "EWMA":
@@ -1478,7 +1536,8 @@ with deck_alloc, st.expander("Weights: how the money is split",
             # emoji in a 60%-opacity caption (2.63:1, Council B)
             '<div class="dq-row"><span class="dq-mark" role="img" aria-label="Warning" '
             'style="color:#6A5030;font-weight:700;">!</span> '
-            "Panic view: EWMA jumps on one bad day. Half its weight sits in the "
+            "Panic view: EWMA means recent days count most and older ones fade "
+            "out, so it jumps on one bad day. Half its weight sits in the "
             "last ≈11 trading days, about 73% in the last month, and 90% in the "
             "last ~37 (λ=0.94). It is shown so you can see how jumpy risk can "
             "look; the Crisis Conviction tab shows what followed past panics, and "
@@ -1790,7 +1849,7 @@ with v_col:
             'cone shows.'
             '</div>', unsafe_allow_html=True)
 with f_col:
-    st.plotly_chart(fan_chart(mc["path_bands"]), width="stretch", config=PLOTLY_CFG)
+    st.plotly_chart(fan_chart(mc["path_bands"], mc["cvar"]), width="stretch", config=PLOTLY_CFG)
     # Jump-diffusion resamples nothing, and a replay under 30 days falls back to
     # i.i.d. (block_days=1): both used to claim "crash weeks stay intact".
     _se_txt = (f" Luck alone could shift the big number by about "
@@ -1804,8 +1863,8 @@ with f_col:
                if np.isfinite(mc.get("cvar_se", float("nan"))) else "")
     # John, 2026-11-09: long explanations in plain, short words
     st.caption(
-        "Each simulated year is stitched together from real days, so this "
-        "shows what could happen, not a forecast. Lines are smoothed." + _se_txt
+        "Each simulated year is stitched from real days: what could happen, "
+        "not a forecast. Lines are smoothed." + _se_txt
     )
 
 # ---- The Book: the guided arc, deliberately AHEAD of the tab strip ----
@@ -1896,6 +1955,23 @@ with _bk_more:
         # come from narrative.role_label: a name with no role can still hold
         # capital, so "Left out" is only for a name holding none.
         _ROW = {Role.FLYER: "is-flyer", Role.CUSHION: "is-cushion", Role.EXCLUDED: "is-excluded"}
+        # The figures a reader looks for, pulled out beside each lead and anchor
+        # (a card's stat column, after Kokonut UI; John 2026-11-17): the same
+        # fields and formats its sentence prints, and a hairline bar scaled to
+        # the largest share on the page - each one a field the engine measured.
+        _top_w = max((x.final_weight for x in _the_book
+                      if x.role in (Role.FLYER, Role.CUSHION)), default=0) or 1
+
+        def _figs(d):
+            # grit ranks names within the visitor's basket, so a steady name
+            # from outside it shows none (test_the_books_grit_is_the_grit_zones_full_history_grit)
+            g = (f'<span>grit {d.grit_score:.0f} of 100</span>'
+                 if d.grit_score is not None and not d.is_fallback_anchor else "")
+            pair = f'<span>with {html.escape(d.partner)}</span>' if d.partner else ""
+            return (f'<div class="book-figs"><b>{html.escape(d.ticker)}</b>'
+                    f'<span>{d.final_weight:.1%} of the book</span>'
+                    f'<i class="book-bar" style="width:{100 * d.final_weight / _top_w:.0f}%"></i>'
+                    f'{g}{pair}</div>')
         for _d in _the_book:
             _lbl = role_label(_d)
             # A "No role" card shows what it holds, so "still held" can be
@@ -1914,7 +1990,8 @@ with _bk_more:
             # leaders and anchors stay on the page; the rest is in the drawer
             (_bk_lead if _d.role in (Role.FLYER, Role.CUSHION) else st).markdown(
                 f'<div class="book-row {_ROW[_d.role]}"><div class="book-role">{_lbl}</div>'
-                f'<div class="book-text">{_d.sentence()}{_flag}{_bind}</div></div>',
+                f'<div class="book-text">{_d.sentence()}{_flag}{_bind}</div>'
+                f'{_figs(_d) if _d.role in (Role.FLYER, Role.CUSHION) else ""}</div>',
                 unsafe_allow_html=True)
 
         read_me(
@@ -1964,12 +2041,10 @@ with tab_3d:
         with st.container(key="risk-map"):
             st.iframe(war_room_html(_wr_payload), width="stretch", height=820)
         st.caption(
-            "Where your book could drift in the next 30 days. Left to right: how "
-            "much it moves with the market (beta). Bottom to top: how much it "
-            "swings (volatility). The bright ground holds 68 in 100 of the likely "
-            "spots and goes dark past 99.7 in 100. The outer line is a set danger "
-            "limit. Fitted to this book's own past: estimates, not forecasts. "
-            "Explain the map names every term."
+            "Where your book could drift in 30 days. Across: how much it "
+            "moves with the market (beta). Up: how much it swings (volatility). "
+            "Bright ground: 68 in 100 likely spots; dark past 99.7. The outer line "
+            "is a set danger limit. Estimates, not forecasts."
         )
     except Exception as _wr_exc:  # noqa: BLE001 - never fake the map
         st.info(
@@ -1985,6 +2060,10 @@ with tab_breakdown:
     c1.metric("Median 1-year return", f"{mc['median_return']:+.1%}")
     c2.metric("Chance of a losing year", f"{mc['prob_loss']:.1%}")
     c3.metric("Worst simulated year", f"{mc['worst_case']:+.1%}")
+    # two return figures on one tab read as a contradiction unless each says
+    # where it comes from (John, 2026-11-12: nothing contradictory)
+    st.caption(f"These three come from the {mc['n_simulations']:,} simulated years. "
+               "The Sharpe row below reads the real past days.")
 
     # --- Risk-contribution decomposition (where the risk actually lives) ---
     panel_head("Risk by name", "How much of the book's swings each name causes")
@@ -1994,27 +2073,16 @@ with tab_breakdown:
     # every weight bar shrank and read as a risk/weight gap that was pure
     # leverage. Leverage scales the whole book and cannot change the split.
     rc = risk_contributions(base_weights, cov)
-    rc_fig = go.Figure()
-    rc_fig.add_trace(go.Bar(
-        y=list(rc.index), x=rc["weight"].values * 100, orientation="h",
-        name="dollar weight", marker=dict(color=GOLD),
-        hovertemplate="%{y} weight: %{x:.1f}%<extra></extra>"))
-    rc_fig.add_trace(go.Bar(
-        y=list(rc.index), x=rc["risk_pct"].values * 100, orientation="h",
-        name="risk share", marker=dict(color=STONE),
-        hovertemplate="%{y} risk: %{x:.1f}%<extra></extra>"))
-    rc_fig = _style_fig(rc_fig, height=max(200, 46 * len(rc)))
-    rc_fig.update_layout(
-        barmode="group", xaxis_title_text="% of portfolio", showlegend=True,
-        legend=dict(orientation="h", y=1.14, x=0, font=dict(size=11)))
+    rc_fig = risk_by_name_fig(rc)
     st.plotly_chart(rc_fig, width="stretch", config=PLOTLY_CFG)
     top = rc["risk_pct"].idxmax()
     st.caption(
-        f"Gold: the share of the money in each name. Dark: its share of the "
-        f"portfolio's swings (volatility). {top} causes the most "
-        f"({rc.loc[top, 'risk_pct']:.0%}). Equal money is not equal risk; switch "
-        "Weights to Risk parity to even out the dark bars."
-        + (f" Both bars are shares of the book itself; the {leverage:.2f}× "
+        f"Gold square: each name's share of the money. Dark diamond: its "
+        f"share of the swings (volatility). The line between them is "
+        f"the gap. {top} causes the most ({rc.loc[top, 'risk_pct']:.0%}). Equal "
+        "money is not equal risk; switch Weights to Risk parity to line the "
+        "diamonds up."
+        + (f" Both marks are shares of the book itself; the {leverage:.2f}× "
            "volatility target scales the whole book and does not change this "
            "split." if use_vt else "")
     )
@@ -2072,9 +2140,9 @@ st.caption(
 
 with tab_grit:
     st.caption(
-        "Grit ranks your names on three things: how fast and how fully each "
-        "won back its own falls of 5% or more, how often a year of holding it "
-        "ended in a gain, and how it held up in the real crises we replay."
+        "Grit ranks your names on three things: how they won back their own "
+        "falls of 5% or more, how often a year of holding ended in a gain, and "
+        "the real crises."
     )
     try:
         grit = load_grit(tuple(loaded))
@@ -2117,10 +2185,9 @@ with tab_grit:
             panel_head("Grit, part by part", "Recovery · consistency · resilience")
             st.plotly_chart(grit_breakdown_fig(gscores), width="stretch", config=PLOTLY_CFG)
             st.caption(
-                "Each bar ranks a name against the others in this basket, not on "
-                "a fixed scale, so a different basket moves every number. Recovery "
-                "counts falls of 5% or more; resilience uses only the crises the "
-                "name traded through."
+                "Each bar ranks a name against the others in this basket, so a "
+                "different basket moves every number. Resilience counts only the "
+                "crises a name traded through."
             )
 
             if grit["excluded"]:
@@ -2238,12 +2305,11 @@ with tab_conviction:
             _p3y = pd.to_numeric(show["Peak buy, 3y later"], errors="coerce")
             _behind = show.loc[_p3y < 0, "Crisis"].tolist()
             st.caption(
-                "No one can buy at the exact bottom, so the bottom columns only show "
-                "which way history leans, not a plan to follow. The peak columns show "
-                "the unluckiest buyer, who bought at the top: they were ahead three "
-                f"years later in {int((_p3y > 0).sum())} of "
-                f"{int(_p3y.notna().sum())} crises with three years of data"
-                + (f". Three years was not enough after {', '.join(_behind)}."
+                "Nobody buys the exact bottom; those columns show how history "
+                "leans. The peak columns follow a buyer at the top: ahead three "
+                f"years on in {int((_p3y > 0).sum())} of {int(_p3y.notna().sum())} "
+                "crises old enough to tell"
+                + (f". Still behind after {', '.join(_behind)}."
                    if _behind else ".")
             )
     except Exception as exc:  # noqa: BLE001
@@ -2305,49 +2371,31 @@ with tab_lineage:
             f"- Library: yfinance {prov['yfinance_version']}"
         )
         st.caption(
-            "Prices are live end-of-day adjusted closes, pulled on demand from "
-            "Yahoo Finance. Every figure above is computed from this source by "
-            "the engine's own code; no value originates from a language model. "
-            f"A copy older than {CACHE_MAX_AGE_HOURS:g} hours is re-pulled "
-            "automatically on the next interaction, and the starter baskets are "
-            "also refreshed in the background every 5 hours."
+            "Prices are live end-of-day adjusted closes from Yahoo Finance. Every "
+            "figure above is computed from them by the engine's own code; no value "
+            "comes from a language model. A copy is pulled again after each market "
+            f"close or once it is {CACHE_MAX_AGE_HOURS:g} hours old."
         )
     else:
         st.caption("Provenance record appears after the first live fetch.")
 
     panel_head("This run's audit trail", "Every step this session took, in order")
     st.caption(
-        "Kept for this visit only: rebuilt on every change, never stored. A "
-        "full compliance system would write it to permanent storage; this is "
-        "the same idea at this engine's scale."
+        "Kept for this visit only: rebuilt on every change, never stored."
     )
     st.dataframe(pd.DataFrame(audit_log), width="stretch", hide_index=True)
 
     # ---- Your data: what stands in for a "delete my account" control ----
     panel_head("Your data", "What this app holds about you, and how to clear it")
     st.markdown(
-        "There is no account to delete: Meliona has no sign-up, login or "
-        "password, and no analytics or advertising SDK. It stores at most three "
-        "things in your browser: Streamlit's anti-forgery cookie and your light "
-        "or dark theme, and, once you press OK on the cookie notice, a note that "
-        "you have seen it (details in the privacy note).\n\n"
-        f"- This session, in memory only and gone when you close the tab: the "
-        f"tickers you chose, the settings above, the preset in the address bar, "
-        f"and the random reference {SESSION_REF}, which is not linked to you.\n"
-        "- The server: cached Yahoo Finance price files, named by a hash of the "
-        "ticker set. They are public market data, shared by every visitor who "
-        "picks the same basket, and hold nothing about you.\n"
-        "- Logs: errors and a session-start line, tagged with the reference "
-        "above so a support email can be matched to a stack trace. They rotate "
-        "away on size and hold no personal data. Once an hour the server also "
-        "writes one line of anonymous totals: how many sessions started today "
-        "and how many opened each preset basket, with no reference in it.\n"
-        "- Third parties: nothing about you. The server fetches prices from "
-        "Yahoo Finance only, and your browser talks only to this app.\n\n"
-        f"To have the logs for your reference purged early, email "
-        f"[{SUPPORT_EMAIL}](mailto:{SUPPORT_EMAIL}) and quote {SESSION_REF}, "
-        f"or [report this session]({FEEDBACK_LINK}) with the reference already "
-        f"filled in."
+        "No account to delete: no sign-up, no analytics, no ads. Your tickers and "
+        "settings live in this session's memory and are gone when you close the "
+        f"tab.\n\nThis session's random reference, {SESSION_REF}, tags the server's short error "
+        "logs and is not linked to you; the server's price files are public market "
+        f"data ([privacy note]({PRIVACY_URL})).\n\n"
+        f"To have those log lines purged early, email [{SUPPORT_EMAIL}](mailto:"
+        f"{SUPPORT_EMAIL}) and quote {SESSION_REF}, or [report this session]"
+        f"({FEEDBACK_LINK}) with the reference filled in."
     )
     if st.button("Clear this session's data", key="wipe_session"):
         # Deliberately session-scoped: it clears what THIS browser holds. It
@@ -2382,7 +2430,7 @@ st.markdown(
     # a heading by role, not an <h2>: Streamlit gives every markdown heading
     # an id made from its text, and "contact" would be this section's own id
     # a second time (one element per id: tools/device_check.mjs)
-    '<div class="showcase-title" role="heading" aria-level="2">Contact</div><div class="ar-rule"></div>'
+    '<div class="showcase-title" role="heading" aria-level="2">A question, a role, or a number that looks wrong</div><div class="ar-rule"></div>'
     f'<p class="contact-sub">{RESPONSE_TIME} Questions, feedback, recruiting or a '
     'problem with a number: write it here and your own email app sends it.</p></div>',
     unsafe_allow_html=True)
@@ -2423,7 +2471,7 @@ with _contact_slot:
         with _form_col:
             with st.form("contact_form", clear_on_submit=False, border=False):
                 _c_name = st.text_input("Your name (optional)", max_chars=CONTACT_NAME_MAX,
-                                        key="contact_name")
+                                        key="contact_name", autocomplete="name")
                 _c_topic = st.selectbox("Topic", CONTACT_TOPICS, key="contact_topic")
                 _c_msg = st.text_area("Message", max_chars=CONTACT_MAX, height=160,
                                       key="contact_message",

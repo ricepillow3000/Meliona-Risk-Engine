@@ -7,11 +7,13 @@
      paper, a charcoal stone block with the live-audit receipt, the faint crest
      engraved behind it, a stone plinth with a gold cap, Georgia's metric twin
      (Gelasio) for words and Helvetica's design (FreeSans) for labels.
-     LinkedIn lays the profile photo over the lower left (about 0-420px wide on
-     desktop, and centred-left on a phone), so that corner carries nothing but
-     paper and the plinth; the words start at 460px.
+     LinkedIn lays the profile photo over the lower left (about 40-360px wide,
+     from about 175px down), so only that spot stays clear: the crest, the name
+     and the kicker run across the top from the 64px margin, and the rule and
+     claim sit right of the photo, from 404px (John, 2026-11-17: "I don't like
+     the empty space"; test_the_linkedin_cover_leaves_no_empty_corner_beside_the_photo).
 
-     The receipt's figures are copied from audit/live_audit_2026-10-15T025826Z.md,
+     The receipt's figures are copied from audit/live_audit_2026-11-13T101321Z.md,
      the same audit the share image quotes; update both together. -->
 <html lang="en">
 <head>
@@ -37,16 +39,17 @@ body { position: relative; color: var(--ink); font-family: var(--serif);
 .stone svg.engraving { position: absolute; left: 50%; top: 50%; width: 300px; height: 300px;
                        transform: translate(-50%, -50%); }
 
-.field { position: absolute; left: 460px; top: 52px; width: 560px; }
-.mark { display: flex; align-items: center; gap: 16px; }
-.mark svg { width: 64px; height: 64px; flex: none; }
-.kicker { font: 700 13px/1.5 var(--sans); letter-spacing: .2em; text-transform: uppercase;
-          color: var(--bronze-text); border-left: 3px solid var(--stone); padding-left: 12px; }
-h1 { font: 700 92px/0.9 var(--serif); letter-spacing: -0.035em; color: var(--ink); margin: 26px 0 0 -4px; }
-.rule { position: relative; height: 3px; margin-top: 20px; }
+.field { position: absolute; left: 64px; top: 40px; width: 960px; }
+.head { display: flex; align-items: center; gap: 22px; }
+.head svg { width: 92px; height: 92px; flex: none; }
+h1 { font: 700 104px/1 var(--serif); letter-spacing: -0.035em; color: var(--ink); margin-top: -6px; }
+.kicker { font: 700 13px/1.6 var(--sans); letter-spacing: .2em; text-transform: uppercase;
+          color: var(--bronze-text); border-left: 3px solid var(--stone); padding-left: 14px; margin-left: 14px; }
+.body { margin-left: 340px; margin-top: 64px; }
+.rule { position: relative; height: 3px; }
 .rule::before { content: ""; position: absolute; left: 0; right: 0; top: 1px; height: 1px; background: var(--ink); opacity: .28; }
 .rule::after { content: ""; position: absolute; left: 0; top: 0; width: 120px; height: 3px; background: var(--stone); }
-.claim { font: 400 20px/1.4 var(--serif); color: var(--ink-2); margin-top: 16px; max-width: 540px; }
+.claim { font: 400 22px/1.45 var(--serif); color: var(--ink-2); margin-top: 20px; max-width: 620px; text-wrap: pretty; }
 .claim b { font-weight: 700; color: var(--ink); }
 
 .receipt { position: absolute; top: 46px; right: 56px; width: 408px; color: var(--paper); }
@@ -75,16 +78,17 @@ h1 { font: 700 92px/0.9 var(--serif); letter-spacing: -0.035em; color: var(--ink
 </div>
 
 <div class="field">
-  <div class="mark"><!--CREST--><p class="kicker">Portfolio risk engine<br>on live end-of-day data</p></div>
-  <h1>Meliona</h1>
-  <div class="rule"></div>
-  <p class="claim">How much could a portfolio lose in a bad year, and what did real crashes do to it? <b>Every number traced to its source.</b></p>
+  <div class="head"><!--CREST--><h1>Meliona</h1><p class="kicker">Portfolio risk engine<br>on live end-of-day data</p></div>
+  <div class="body">
+    <div class="rule"></div>
+    <p class="claim">How much could a portfolio lose in a bad year, and what did real crashes do to it? <b>Every number traced to its source.</b></p>
+  </div>
 </div>
 
 <div class="receipt">
   <h2>Live audit on Yahoo Finance data</h2>
-  <div class="row lead"><span>Audit checks passed</span><b>727 of 728</b></div>
-  <div class="row"><span>Prices vs Yahoo's raw feed</span><b>identical</b></div>
+  <div class="row lead"><span>Audit checks failed</span><b>0 of 832</b></div>
+  <div class="row"><span>Source checks passed</span><b>178 of 178</b></div>
   <div class="row"><span>Real crises replayed</span><b>10</b></div>
   <p class="by">Built by John Nguyen</p>
 </div>

@@ -24,6 +24,7 @@ import hashlib
 import threading
 import time
 import datetime
+from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -190,8 +191,9 @@ def _clean(tickers: list[str] | None) -> list[str]:
 
 
 def _hash(text: str) -> str:
-    # a filename, not a security control: usedforsecurity=False says so
-    return hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:12]
+    # full sha256: a short name could be searched for offline, and a basket
+    # whose name matched a preset's would be served to that preset's visitors
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _cache_path(tickers: list[str], period: str, align: bool = True) -> str:
@@ -215,10 +217,64 @@ def _meta_path(cache_path: str) -> str:
     return cache_path.replace(".parquet", ".meta.json")
 
 
+# end of day, on new york's clock. a daily bar is final once its day's trading
+# is over: the us close plus 30 min for the closing auction to print, or 8pm for
+# markets that trade round the clock (fx, futures, crypto), whose yahoo day has
+# ended by then. before that, yahoo's "today" row is the live price, not a close,
+# so it's dropped - the page says end-of-day and means it.
+NEW_YORK = ZoneInfo("America/New_York")
+CLOSE_FINAL = datetime.time(16, 30)
+ALL_DAY_FINAL = datetime.time(20, 0)
+ALL_DAY = ("=X", "=F", "-USD")
+
+
+def _now() -> datetime.datetime:
+    """the clock (tests pin it)."""
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def _last_final_day(ticker: str) -> datetime.date:
+    """the newest day whose bar for `ticker` is a real close by now."""
+    now = _now().astimezone(NEW_YORK)
+    cut = ALL_DAY_FINAL if ticker.endswith(ALL_DAY) else CLOSE_FINAL
+    return now.date() if now.time() >= cut else now.date() - datetime.timedelta(days=1)
+
+
+def _finished_rows(own: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    """drop bars whose trading day isn't over yet (dates are exchange-local)."""
+    days = pd.DatetimeIndex(own.index)
+    if days.tz is not None:
+        days = days.tz_localize(None)
+    return own[days.normalize() <= pd.Timestamp(_last_final_day(ticker))]
+
+
+def _close_boundaries(now: datetime.datetime) -> list[datetime.datetime]:
+    """weekday moments a new bar becomes final, a week either side of now."""
+    today = now.astimezone(NEW_YORK).date()
+    days = [today + datetime.timedelta(days=d) for d in range(-7, 8)]
+    return sorted(datetime.datetime.combine(d, t, NEW_YORK)
+                  for d in days if d.weekday() < 5 for t in (CLOSE_FINAL, ALL_DAY_FINAL))
+
+
+def last_close_boundary() -> datetime.datetime:
+    """the latest moment a new close came in."""
+    now = _now()
+    return max(b for b in _close_boundaries(now) if b <= now)
+
+
+def next_close_boundary() -> datetime.datetime:
+    """the next moment a new close comes in (tools/warm_cache wakes for it)."""
+    now = _now()
+    return min(b for b in _close_boundaries(now) if b > now)
+
+
 def _is_fresh(stamp: str, max_age_hours: float) -> bool:
-    """true if an iso utc stamp is at most max_age_hours old."""
+    """true if an iso utc stamp is at most max_age_hours old AND no market has
+    closed since - a pull from before the close must not hide the close."""
     fetched = datetime.datetime.fromisoformat(stamp)
-    age = datetime.datetime.now(datetime.timezone.utc) - fetched
+    if fetched < last_close_boundary():
+        return False
+    age = _now() - fetched
     return age <= datetime.timedelta(hours=max_age_hours)
 
 
@@ -241,9 +297,12 @@ def _prune_cache(max_files: int = CACHE_MAX_FILES,
 
     typed-in baskets go before the presets' own downloads, so a stranger typing
     new baskets can't push every preset out and make the next visitor wait.
-    presets only go if they alone blow the budget.
+    presets only go if they alone blow the budget. the anchor shelf every page
+    pulls counts as a preset.
     """
-    names = {t for basket in PRESETS.values() for t in basket} | {"SPY"}
+    from src.pairing import DEFENSIVE_ANCHOR_TICKERS   # here: pairing -> risk -> ingestion
+    names = ({t for basket in PRESETS.values() for t in basket} | {"SPY"}
+             | set(DEFENSIVE_ANCHOR_TICKERS))
     keep = {_raw_path(t, p) for t in names for p in ("2y", "max")}   # periods a preset page pulls
     try:
         paths = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR)
@@ -292,10 +351,19 @@ def _own_rows(raw: pd.DataFrame, ticker: str, alone: bool) -> pd.DataFrame:
 
 
 # yahoo sometimes drops a name (yfinance's tz cache hits "database is locked"),
-# so an empty name is asked for again, alone, up to 2 more times. nothing else
-# is retried, and a name still empty after that is just left out.
+# so an empty name we know is real (suggested, or an anchor) is asked for again,
+# alone, up to 2 more times. nothing else is retried; a name still empty after
+# that is just left out.
 RETRIES = 2
 RETRY_PAUSE = 0.5
+
+# a made-up symbol is never cached, so asking for it again and again spent the
+# day's yahoo budget (security review, 2026-11-12). a name that came back empty
+# isn't asked for again for 15 minutes - except suggested names, so an outage
+# can't lock out a real one. made-up names that change every time can still
+# spend it; presets are warmed and cached, so they keep working.
+NO_DATA_TTL = 900
+_NO_DATA: dict[str, float] = {}     # "name|period" -> when it came back empty
 
 
 def _download_close_volume(tickers: list[str], period: str,
@@ -324,11 +392,18 @@ def _download_close_volume(tickers: list[str], period: str,
             if cached is not None:
                 frames[t] = cached
     missing = [t for t in tickers if t not in frames]
+    if use_cache:
+        clock = time.monotonic()
+        missing = [t for t in missing
+                   if clock - _NO_DATA.get(f"{t}|{period}", -NO_DATA_TTL) >= NO_DATA_TTL]
     if missing:
         # spend cap checked up front, so a spent cap reads as a cap and not as
         # yfinance's confusing "possibly delisted". every call below goes
         # through the egress allowlist (guarded_session).
         check_budget()
+        from src.pairing import DEFENSIVE_ANCHOR_TICKERS   # here: pairing -> risk -> ingestion
+        known = set(SUGGESTIONS) | set(DEFENSIVE_ANCHOR_TICKERS)
+        ask = missing
         # no retry next to an isin: the name may be "empty" because yfinance
         # filed it under the isin, and asking again would add it twice
         for attempt in range(1 + (0 if has_isin else RETRIES)):
@@ -339,22 +414,32 @@ def _download_close_volume(tickers: list[str], period: str,
                 except BudgetExhausted:
                     break
                 time.sleep(RETRY_PAUSE * attempt)
-            raw = yf.download(missing, period=period, auto_adjust=True, progress=False,
+            raw = yf.download(ask, period=period, auto_adjust=True, progress=False,
                               repair=True, timeout=30, session=guarded_session())
-            now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-            for t in missing:
+            now = _now().isoformat(timespec="seconds")
+            for t in ask:
                 own = (pd.DataFrame() if raw is None or raw.empty
-                       else _own_rows(raw, t, alone=len(missing) == 1))
+                       else _finished_rows(_own_rows(raw, t, alone=len(ask) == 1), t))
                 if own.empty:
-                    continue        # a typo or an outage is retried, never cached
+                    continue        # never cached
                 own.attrs["fetched_at_utc"] = now
                 if use_cache:
                     os.makedirs(DATA_DIR, exist_ok=True)
                     _write_parquet(own, _raw_path(t, period))
                 frames[t] = own
+            came_back = any(t in frames for t in ask)
             missing = [t for t in missing if t not in frames]
-            if not missing:
+            # only a name we know is real is asked again: a made-up one beside a
+            # real one was asked three times, tripling its cost to the budget
+            ask = [t for t in missing if t in known]
+            # nothing at all came back: an outage or all made-up - retrying won't help
+            if not ask or not came_back and not attempt:
                 break
+        if use_cache:
+            if len(_NO_DATA) > 10_000:
+                _NO_DATA.clear()
+            for t in set(missing) - set(SUGGESTIONS):
+                _NO_DATA[f"{t}|{period}"] = time.monotonic()
     if not frames:
         raise NoDataError(NO_DATA_MSG)
     # a name with no data stays an all-NaN column, same as one multi download
@@ -376,7 +461,7 @@ def _download_close_volume(tickers: list[str], period: str,
 def _pulled(close: pd.DataFrame) -> tuple[str, str]:
     """(oldest, newest) pull time behind a frame from _download_close_volume;
     'now' for a frame with no stamps (tests/pair_audit)."""
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    now = _now().isoformat(timespec="seconds")
     return (close.attrs.get("fetched_at_utc", now),
             close.attrs.get("fetched_newest_utc", now))
 
@@ -622,7 +707,7 @@ def fetch_risk_free_rate(use_cache: bool = True,
         close = raw["Close"]
         if isinstance(close, pd.DataFrame):
             close = close.iloc[:, 0]
-        rate = float(close.dropna().iloc[-1]) / 100.0
+        rate = float(_finished_rows(close.dropna(), "^IRX").iloc[-1]) / 100.0
     except Exception:  # noqa: BLE001 - no rate beats a fake one
         return None
     if not np.isfinite(rate):
@@ -632,8 +717,7 @@ def fetch_risk_free_rate(use_cache: bool = True,
         _write_json({
             "rate": rate,
             "source": "^IRX (US 13-week T-bill) via Yahoo Finance",
-            "fetched_at_utc": datetime.datetime.now(datetime.timezone.utc)
-                              .isoformat(timespec="seconds"),
+            "fetched_at_utc": _now().isoformat(timespec="seconds"),
         }, path)
     return rate
 
@@ -644,7 +728,7 @@ def data_health(prices: pd.DataFrame) -> dict:
     risk model - too little history, a stale feed, gaps after aligning.
     """
     last_date = prices.index[-1]
-    today = pd.Timestamp.now().normalize()
+    today = _now().astimezone(NEW_YORK)
     staleness_days = int(np.busday_count(last_date.date(), today.date()))
 
     # weekday holes INCLUDING holidays; data_quality's calendar check asks the

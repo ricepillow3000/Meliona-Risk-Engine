@@ -8,7 +8,9 @@ green checks only mean something if they'd go red when the code is wrong. each
 bug below is copied into a temp copy of the repo (never this checkout), the
 engine and narrative tests run against it, and the first red test is named. a
 bug no test catches is a hole: write the test that kills it (John, 2026-11-10;
-the first run caught 21 of 36, the tests added after it catch all 36).
+the first run caught 21 of 36, the tests added after it catch all 36; 37-40
+guard end-of-day, 41-45 the 2026-11-12 security review, 46-54 the
+2026-11-13 audit, 55 the 2026-11-17 gzip review).
 takes ~40 minutes on 4 cores: run it after touching src/, serve.py or safe_err.
 exit code 1 if any planted bug survives.
 """
@@ -35,8 +37,8 @@ BUGS = [
     ("M08", "src/ingestion.py", ".iloc[-1]) / 100.0", ".iloc[-1]) / 10.0", "risk-free rate 10x"),
     ("M09", "src/ingestion.py", "    entries.sort()  ", "    entries.sort(reverse=True)  ", "cache prune drops the wrong files"),
     ("M10", "src/netguard.py", '    return parsed.scheme == "https" and ', "    return ", "plain http allowed out"),
-    ("M11", "src/netguard.py", "        if not host_allowed(str(final)):", "        if False:", "redirect walks off the allowlist"),
-    ("M12", "src/netguard.py", '    if _SPENT["count"] >= MAX_REQUESTS_PER_DAY:', '    if _SPENT["count"] > MAX_REQUESTS_PER_DAY:', "one request past the cap"),
+    ("M11", "src/netguard.py", "*args, allow_redirects=False, **kwargs)", "*args, allow_redirects=follow, **kwargs)", "curl follows redirects before they're checked"),
+    ("M12", "src/netguard.py", '        if _SPENT["count"] >= MAX_REQUESTS_PER_DAY:', '        if _SPENT["count"] > MAX_REQUESTS_PER_DAY:', "one request past the cap"),
     ("M13", "src/netguard.py", '    if status["remaining"] < needed:', '    if status["remaining"] < 0:', "spent cap not caught up front"),
     ("M14", "src/topology.py", '.replace("<", "\\\\u003c")', '.replace("<", "<")', "map json can close its script"),
     ("M15", "src/topology.py", "json.dumps(payload, allow_nan=False)", "json.dumps(payload, allow_nan=False, ensure_ascii=False)", "line separator breaks the map js"),
@@ -59,8 +61,27 @@ BUGS = [
     ("M32", "src/data_quality.py", "EXTREME_MOVE_THRESHOLD = 0.50", "EXTREME_MOVE_THRESHOLD = 5.0", "extreme moves never flagged"),
     ("M33", "src/data_quality.py", '"PASS" if staleness_days <= 1 else "WARN"', '"PASS" if staleness_days <= 100 else "WARN"', "stale feed reads fresh"),
     ("M34", "serve.py", '    "x-content-type-options": "nosniff",', '    "x-content-type-options": "",', "nosniff dropped"),
-    ("M35", "serve.py", 'HIDDEN = ("/_stcore/metrics",)', "HIDDEN = ()", "metrics endpoint exposed"),
+    ("M35", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")', 'HIDDEN = ("/_stcore/upload_file",)', "metrics endpoint exposed"),
     ("M36", "main.py", 'return f"{type(exc).__name__}; quote', 'return f"{exc}; quote', "server paths shown to visitors"),
+    ("M37", "src/ingestion.py", "else _finished_rows(_own_rows(raw, t, alone=len(ask) == 1), t))", "else _own_rows(raw, t, alone=len(ask) == 1))", "today's live price kept as a close"),
+    ("M38", "src/ingestion.py", "    if fetched < last_close_boundary():", "    if False:", "a pre-close pull hides the close"),
+    ("M39", "src/ingestion.py", "CLOSE_FINAL = datetime.time(16, 30)", "CLOSE_FINAL = datetime.time(9, 30)", "bar kept from the opening bell"),
+    ("M40", "src/ingestion.py", 'ALL_DAY = ("=X", "=F", "-USD")', "ALL_DAY = ()", "fx bar kept before its day ends"),
+    ("M41", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")', 'HIDDEN = ("/_stcore/metrics",)', "uploads park files in memory"),
+    ("M42", "serve.py", "            code = 1009 if size > MAX_MESSAGE_BYTES else 1013", "            code = 1013", "a 16 MB message reaches the app"),
+    ("M43", "serve.py", '    addr = hops[-1] if hops else', '    addr = hops[0] if hops else', "client picks its own address"),
+    ("M44", "src/ingestion.py", "                   if clock - _NO_DATA.get(", "                   if True or clock - _NO_DATA.get(", "made-up names spend the budget"),
+    ("M45", "serve.py", '    return str(ipaddress.ip_network(f"{ip}/64", strict=False)) if ip.version == 6 else addr', "    return addr", "one ipv6 block = 2^64 addresses"),
+    ("M46", "src/ingestion.py", "    return hashlib.sha256(text.encode()).hexdigest()", "    return hashlib.sha256(text.encode()).hexdigest()[:12]", "a stranger's basket takes a preset's cache slot"),
+    ("M47", "src/ingestion.py", "             | set(DEFENSIVE_ANCHOR_TICKERS))", "             | set())", "the anchor shelf pruned out of the cache"),
+    ("M48", "main.py", '        log_no_data(SESSION_REF, "load_universe")', '        log_incident(SESSION_REF, "load_universe", exc)', "a script buries real errors under typos"),
+    ("M49", "src/ingestion.py", "            ask = [t for t in missing if t in known]", "            ask = missing", "a real name beside made-up ones triples their cost"),
+    ("M50", "src/observability.py", "    if value != default and shape and not re.fullmatch(", "    if False and not re.fullmatch(", "a host setting breaks out of its html attribute"),
+    ("M51", ".streamlit/config.toml", "maxMessageSize = 1\n", "maxMessageSize = 16\n", "one message unpacks to 16 MB"),
+    ("M52", ".github/workflows/container.yml", "    needs: image\n    if: github.ref == 'refs/heads/main'\n", "    needs: image\n", "every branch may publish the image"),
+    ("M53", "docker/Dockerfile", "FROM python:3.13-slim@sha256:", "FROM python:3.13-slim #", "the image's base moves under it"),
+    ("M54", ".github/dependabot.yml", '      - dependency-name: "python"\n', '      - dependency-name: "none"\n', "Dependabot moves the image off the site's Python"),
+    ("M55", "serve.py", "            if not page and len(self.cache) < GZIP_CACHE_MAX:", "            if len(self.cache) < GZIP_CACHE_MAX:", "made-up paths fill the gzip cache"),
 ]
 SKIP = shutil.ignore_patterns(".git", "data", "logs", "audit", ".claude", "__pycache__", "node_modules")
 
