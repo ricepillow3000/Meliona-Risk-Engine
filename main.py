@@ -1592,7 +1592,8 @@ alloc_label = "risk-parity" if method == "Risk parity" else "equal-weight"
 if bearish:
     alloc_label = f"short {alloc_label}"
 alloc_art = "an" if alloc_label[0] in "aeiou" else "a"  # "an equal-weight" / "a short ..."
-lev_txt = f", levered {leverage:.2f}×" if use_vt else ""
+# no-break spaces: the method line's last words never wrap alone
+lev_txt = f", levered\u00a0{leverage:.2f}×" if use_vt else ""
 
 with deck_stress, st.expander("Stress test: shock or replay a crisis",
                               expanded=False):
@@ -2150,7 +2151,7 @@ engine_txt = (
 )
 st.caption(
     f"Methodology: {mc['n_simulations']:,} simulated years of {mc['horizon_days']} trading days each, "
-    f"from {engine_txt} {source_txt}. Weighting: {alloc_label}{lev_txt}."
+    f"from {engine_txt} {source_txt}. Weighting:\u00a0{alloc_label}{lev_txt}."
 )
 
 with tab_grit:

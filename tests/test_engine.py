@@ -7713,6 +7713,7 @@ def test_the_first_visitor_review_of_2026_11_19_holds():
     fresh = _exec_nodes([_lift_assign(tree, "fresh")], {"health": {"staleness_days": 3}})["fresh"]
     assert fresh == "3\u00a0days old", fresh
     assert "st.columns([1.2, 2.6, 1.2])" not in main, "the side picker is centred off the page's left edge"
+    assert "Weighting:\\u00a0{alloc_label}" in main, "the method line can end on a lone word"
     assert "are the Book's own split" in main, "the Book's shares and the headline's weights are not told apart"
     bar = re.search(r"\.meliona-footer \.f-bar \{([^}]*)\}", css).group(1)
     assert "font-family: Georgia" in bar, "the footer's small print is not in Georgia"
