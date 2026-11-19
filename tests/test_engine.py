@@ -546,9 +546,9 @@ def test_a_basket_stitched_from_single_names_matches_one_download():
     with _FakeYahoo() as fy:
         ing._download_close_volume(["AAA", "BTC-USD"], "2y")    # two names known
         close, volume = ing._download_close_volume(basket, "2y")
-        # only the names not held, then (ME-14) only the ones that came back empty
-        assert fy.downloads[1:] == [["BBB", "DEAD", "EMPTY", "EURUSD=X"],
-                                    ["DEAD", "EMPTY"], ["DEAD", "EMPTY"]], fy.downloads
+        # only the names not held; unknown names that came back empty are not
+        # asked again (2026-11-13 audit), so one download
+        assert fy.downloads[1:] == [["BBB", "DEAD", "EMPTY", "EURUSD=X"]], fy.downloads
         ref = fy.reference(basket)
         pd.testing.assert_frame_equal(close, ref["Close"], check_exact=True, check_freq=False)
         pd.testing.assert_frame_equal(volume, ref["Volume"], check_exact=True,
@@ -570,8 +570,8 @@ def test_a_basket_stitched_from_single_names_matches_one_download():
 def test_adding_names_to_a_known_basket_downloads_only_the_new_names():
     """The point of the per-name cache: a visitor who adds three names to a
     basket the server already holds costs three downloads, not fifteen. A
-    name past its freshness is pulled again, a failed name is never
-    remembered (a typo or an outage is retried), and the basket's provenance
+    name past its freshness is pulled again, a made-up name that failed is
+    not asked again for 15 minutes (2026-11-12), and the basket's provenance
     states its OLDEST pull - the age the page shows is the honest one - and
     its newest."""
     import datetime as _dt
@@ -581,10 +581,11 @@ def test_adding_names_to_a_known_basket_downloads_only_the_new_names():
     with _FakeYahoo() as fy:
         ing.fetch_prices(["AAA", "BBB"])
         ing.fetch_prices(["AAA", "BBB", "CCC", "DDD", "DEAD"])
-        # DEAD is never served: asked again twice (ME-14), then left out
-        assert fy.downloads == [["AAA", "BBB"], ["CCC", "DDD", "DEAD"], ["DEAD"], ["DEAD"]], fy.downloads
+        # DEAD is never served and is no symbol we know, so it is asked once
+        # (2026-11-13 audit), then left out
+        assert fy.downloads == [["AAA", "BBB"], ["CCC", "DDD", "DEAD"]], fy.downloads
         ing.fetch_prices(["CCC", "DEAD"])
-        assert fy.downloads[-1] == ["DEAD"], f"a failed name was remembered: {fy.downloads}"
+        assert len(fy.downloads) == 2, f"a name that just failed was asked again: {fy.downloads}"
 
         def stamp(t, hours_ago):
             path = ing._raw_path(t, "2y")
@@ -765,6 +766,11 @@ def test_every_dependency_is_pinned_to_an_exact_version():
     assert len(reqs) >= 10, reqs
     loose = [r for r in reqs if not re.fullmatch(r"[A-Za-z0-9_.\-]+==[0-9][0-9A-Za-z.]*", r)]
     assert not loose, f"not pinned to one exact version: {loose}"
+    # serve.py's headers, rate limits and websocket cap run on these; streamlit
+    # only bounds them (starlette<2), so unpinned they floated with every build
+    # (2026-11-13 audit)
+    named = {r.split("==")[0].lower() for r in reqs}
+    assert {"starlette", "uvicorn", "websockets"} <= named, named
     audit = (root / ".github" / "workflows" / "live-audit.yml").read_text(encoding="utf-8")
     tools = re.search(r"pip install -r requirements\.txt (.+)", audit).group(1).split()
     assert tools and all("==" in t for t in tools), tools
@@ -2263,6 +2269,53 @@ def test_the_cache_budget_drops_typed_baskets_before_the_presets():
                                                   os.path.basename(typed[-1])])
 
 
+def test_the_cache_budget_keeps_the_anchor_shelf():
+    """2026-11-13 audit: every page pulls the anchor shelf, but USMV is in no
+    preset, so a script cycling baskets of cached names (no Yahoo request, four
+    files a rerun) pushed its download out - and with the day's budget spent,
+    the Book and the map lost their anchors for every visitor."""
+    import os
+    import tempfile
+
+    import src.ingestion as ingestion
+    from src.pairing import DEFENSIVE_ANCHOR_TICKERS
+
+    with tempfile.TemporaryDirectory() as tmp:
+        original = ingestion.DATA_DIR
+        ingestion.DATA_DIR = tmp
+        try:
+            anchors = [ingestion._raw_path(t, "2y") for t in DEFENSIVE_ANCHOR_TICKERS]
+            typed = [os.path.join(tmp, f"prices_typed_{i}.parquet") for i in range(3)]
+            for age, path in enumerate([*anchors, *typed]):      # anchors oldest
+                with open(path, "wb") as fh:
+                    fh.write(b"x" * 1024)
+                os.utime(path, (1_700_000_000 + age, 1_700_000_000 + age))
+            ingestion._prune_cache(max_files=len(anchors), max_mb=1000)
+        finally:
+            ingestion.DATA_DIR = original
+        assert sorted(os.listdir(tmp)) == sorted(os.path.basename(p) for p in anchors)
+
+
+def test_a_crafted_basket_cannot_take_over_a_presets_cache_slot():
+    """2026-11-13 audit: cache files were named by 12 hex characters of md5
+    (48 bits). Made-up names drop out of the data but stay in the key, so a
+    basket of one real name plus made-up ones could be searched offline (about
+    half an hour on one GPU) until its name matched a preset's, then typed while
+    the preset's slot was stale: that preset's visitors got the stranger's
+    basket until it went stale again. A full sha256 name cannot be searched for."""
+    import os
+    import re
+
+    import src.ingestion as ingestion
+
+    for path in (ingestion._cache_path(["SPY", "TLT"], "2y"),
+                 ingestion._cache_path(["SPY", "TLT"], "max", align=False),
+                 ingestion._dv_cache_path(["SPY", "TLT"], "2y"),
+                 ingestion._raw_path("SPY", "2y")):
+        key = os.path.basename(path).split("_", 1)[1].split(".")[0]
+        assert re.fullmatch(r"[0-9a-f]{64}", key), f"guessable cache name: {path}"
+
+
 def test_deploy_config_keeps_the_visitor_out_of_the_operator_seat():
     """Regression guard on the deployed posture: a visitor is a viewer, gets no
     operator toolbar, no tracebacks, and XSRF/CORS stay on."""
@@ -2279,7 +2332,9 @@ def test_deploy_config_keeps_the_visitor_out_of_the_operator_seat():
     assert settings["enableCORS"] == "true"
     assert settings["headless"] == "true"
     # 2026-11-04: the websocket's message cap, Streamlit's 200 MB by default.
-    assert 0 < int(settings["maxMessageSize"]) <= 16
+    # the same cap bounds what one inbound message may unpack to; the page's
+    # biggest message is ~0.1 MB (deep scan checks it keeps half the cap free)
+    assert int(settings["maxMessageSize"]) == 1, "one message may unpack to 16 MB"
 
 
 def test_every_response_carries_the_security_headers():
@@ -3923,6 +3978,57 @@ def test_the_served_page_carries_the_security_meta_streamlit_cannot_send():
     assert '<meta name="referrer" content="strict-origin-when-cross-origin">' in head
 
 
+def test_dependabot_prs_run_every_audit():
+    """2026-11-13 audit: dependabot.yml and RUNBOOK promise every Dependabot PR
+    runs the Live, Pair and Options audits and the container build, but each
+    ran only on claude/** - a bump, even a CVE fix, went unchecked or waited on
+    a gate that never came."""
+    import re
+    flows = pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    for name in ("live-audit.yml", "pair-audit.yml", "options-audit.yml", "container.yml"):
+        push = re.search(r"\n  push:\n    branches: \[(.*)\]", (flows / name).read_text(encoding="utf-8"))
+        assert push and '"dependabot/**"' in push.group(1), f"{name} skips Dependabot's PRs"
+
+
+def test_the_image_is_pinned_and_only_main_may_publish_it():
+    """2026-11-13 audit: the image's base was a tag (whatever python:3.13-slim
+    pointed to that day went straight into ghcr.io), Dependabot watched no
+    Docker file, and every branch's build ran with the right to publish. The
+    base is a digest Dependabot moves, and only a job that runs on main alone
+    holds packages: write."""
+    import re
+    root = pathlib.Path(__file__).resolve().parents[1]
+    docker = (root / "docker" / "Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^FROM \S+@sha256:[0-9a-f]{64}$", docker, re.M), "the base image is a tag"
+    bot = (root / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    assert re.search(r'package-ecosystem: "docker"\n\s+directory: "/docker"', bot), \
+        "nothing proposes the base image's updates"
+    # the box runs the site's Python (runtime.txt): Dependabot may move the
+    # digest within it, never jump the version (it proposed 3.13 -> 3.15 at once)
+    docker_block = bot.split('package-ecosystem: "docker"', 1)[1].split("package-ecosystem", 1)[0]
+    assert re.search(r'dependency-name: "python"\n\s+update-types: \["version-update:semver-major", '
+                     r'"version-update:semver-minor"\]', docker_block), \
+        "Dependabot may move the image off the site's Python"
+    flow = (root / ".github" / "workflows" / "container.yml").read_text(encoding="utf-8")
+    jobs = re.split(r"\n  (?=[\w-]+:\n)", flow.split("\njobs:\n", 1)[1])
+    writers = [j for j in jobs if "packages: write" in j]
+    assert len(writers) == 1, f"{len(writers)} jobs may publish"
+    assert re.search(r"\n    if: github\.ref == 'refs/heads/main'\n", writers[0]), \
+        "the job that may publish runs on every branch"
+    head = flow.split("\njobs:\n", 1)[0]
+    assert "packages: write" not in head
+
+
+def test_a_local_image_build_leaves_secrets_out():
+    """2026-11-13 audit: .gitignore kept secret files out of git but the image's
+    ignore file did not, so `docker build` on a machine holding a .env baked it
+    into a layer. Every secret pattern git ignores, the image ignores too."""
+    root = pathlib.Path(__file__).resolve().parents[1]
+    image = (root / "docker" / "Dockerfile.dockerignore").read_text(encoding="utf-8").split()
+    for secret in (".env", ".env.*", "*.pem", "*.key", "**/secrets.toml", "**/credentials.json"):
+        assert secret in image, f"{secret} would be baked into the image"
+
+
 def test_the_container_runs_what_the_procfile_runs():
     """John, 2026-11-02: package the app so it runs the same on any machine -
     Docker, free, rather than Kubernetes (RUNBOOK §4). The box must run what
@@ -4237,8 +4343,8 @@ def test_gungnir_plaque_matches_its_sketch_and_its_math():
         assert abs(w[0] * s1 - w[1] * s2) < 1e-9, (rho, w)
         assert abs(w[0] - 0.25) < 1e-9 and abs(w[1] - 0.75) < 1e-9, (rho, w)
     src = (pathlib.Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
-    assert 'class="c">flyer<' in src and 'class="c">cushion<' in src, \
-        "the plaque must name the sketch's two blocks, the flyer and the cushion"
+    assert 'class="c">flyer<' in src and 'class="c">anchor<' in src, \
+        "the plaque must name the sketch's two blocks, the flyer and the anchor"
     assert 'class="c">circle' not in src and "Circle A" not in src
 
 
@@ -4272,11 +4378,23 @@ def test_blocks_reveal_on_arrival_on_the_gpu_and_never_hide_without_script():
     # under a reader who stopped: John, 2026-11-06)
     assert "new IntersectionObserver" in js and "new MutationObserver" in js
     assert "addEventListener('scroll'" not in js and "animation-range" not in css
-    # an arrival starts BEFORE its slot is on screen, never inside the edge
-    # (-8% left headings, cards and the contact button missing or out of
-    # place at the screen's foot until a scroll brought them in)
-    lead = re.search(r"var LEAD = '(\d+)%';", js)
-    assert lead and int(lead.group(1)) >= 10 and "rootMargin: '0px 0px ' + LEAD" in js
+    # an arrival starts ON screen, where the reader sees it move (John,
+    # 2026-11-13: starting 15% below the edge, 92% had landed unseen), and
+    # one the reader stopped short of starts after a short dwell, so nothing
+    # waits at the screen's foot (2026-11-06). Measured in a browser by
+    # tools/arrival_check.mjs (Live audit 8b).
+    foot = re.search(r"var FOOT = '-(\d+)%';", js)
+    dwell = re.search(r"var DWELL_MS = (\d+);", js)
+    assert foot and 5 <= int(foot.group(1)) <= 20 and "rootMargin: '0px 0px ' + FOOT" in js
+    assert dwell and int(dwell.group(1)) <= 400 and "new IntersectionObserver(linger" in js
+    # ...measured from its place, not its waiting box (28px low): a block
+    # whose place was the screen's last 28px waited there as a gap
+    slack = re.search(r"var SLACK = '(\d+)px';", js)
+    rise_y = re.search(r"--reveal-y: (\d+)px", css)
+    assert slack and rise_y and int(slack.group(1)) >= int(rise_y.group(1)) and "rootMargin: '0px 0px ' + SLACK" in js
+    # no arrival plays during the first load, when Streamlit has the blocks
+    # on a short first screen before the hero's slot pushes them down
+    assert "if (!ready) return;" in js and "'data-test-script-state') === 'notRunning') release()" in js
     # ...measured on the page's own scroller: on the window, stMain clipped
     # every block below it first and the lead counted for nothing
     assert "new IntersectionObserver(arrive, { root: sc," in js
@@ -4443,6 +4561,57 @@ def test_the_crest_engraving_is_the_banners_and_used_sparingly():
     # the paper is flat: the Slice's topography and its faded mark are gone
     assert ".st-key-gungnir_zone::before" not in css and "_gungnir_bg" not in main
     assert ".showcase-row::before" not in css, "a plate is drawn behind the band again"
+
+
+def test_the_link_preview_quotes_the_newest_live_audit():
+    """John, 2026-11-13: the preview still read "727 of 728" from the 15 Oct
+    audit, and that phrase reads as one failure when the 728th was a warning.
+    The banner cites the newest committed live audit receipt, and every figure
+    on it, and in the image's alt text, is printed in that receipt."""
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    banner = (root / "tools" / "og_image.html").read_text(encoding="utf-8")
+    cited = re.search(r"copied from (audit/live_audit_[\w-]+\.md)", banner).group(1)
+    newest = sorted((root / "audit").glob("live_audit_*.md"))[-1]
+    assert cited == f"audit/{newest.name}", f"the banner cites {cited}, not the newest {newest.name}"
+    receipt = newest.read_text(encoding="utf-8")
+    block = banner[banner.index('<div class="receipt">'):banner.index('<div class="plinth">')]
+    alt = (root / "tools" / "public_files.py").read_text(encoding="utf-8")
+    alt = alt[alt.index('og:image:alt'):alt.index('twitter:card')]
+    figures = re.findall(r"\d[\d.,]*", re.sub(r"<[^>]+>", " ", block) + alt)
+    assert figures, "the receipt shows no figures"
+    for f in figures:
+        assert re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", receipt), f"{f} is not in {newest.name}"
+    # John's LinkedIn cover quotes the same receipt; its crisis count is the engine's own
+    from src.scenarios import HISTORICAL_REGIMES
+    cover = (root / "tools" / "linkedin_banner.html").read_text(encoding="utf-8")
+    assert re.search(r"copied from (audit/live_audit_[\w-]+\.md)", cover).group(1) == cited, \
+        "the LinkedIn cover cites another audit than the link preview"
+    rows = re.findall(r'<div class="row[^"]*"><span>([^<]+)</span><b>([^<]+)</b>', cover)
+    assert rows, "the cover shows no receipt rows"
+    for label, value in rows:
+        if label == "Real crises replayed":
+            assert value == str(len(HISTORICAL_REGIMES)), "the cover's crisis count drifted from the engine"
+            continue
+        for f in re.findall(r"\d[\d.,]*", value):
+            assert re.search(rf"(?<![\d.]){re.escape(f)}(?![\d])", receipt), \
+                f"the cover's {label!r} figure {f} is not in {newest.name}"
+
+
+def test_the_linkedin_cover_leaves_no_empty_corner_beside_the_photo():
+    """John, 2026-11-17: "I don't like the empty space". LinkedIn lays the
+    profile photo over the cover's lower left, so only that spot stays clear:
+    the crest and name start at the 64px margin across the top, and the words
+    below them start right of the photo (past 400px)."""
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    cover = (root / "tools" / "linkedin_banner.html").read_text(encoding="utf-8")
+    field = re.search(r"\.field \{[^}]*left: (\d+)px", cover)
+    assert field and int(field.group(1)) == 64, "the crest and name do not start at the 64px margin"
+    body = re.search(r"\.body \{[^}]*margin-left: (\d+)px", cover)
+    assert body and 64 + int(body.group(1)) >= 400, "the words under the name run into the photo's spot"
+    head = cover[cover.index('<div class="head">'):cover.index('<div class="body">')]
+    assert "<!--CREST-->" in head and "<h1>Meliona</h1>" in head, "the top row is not the crest and the name"
 
 
 def test_public_files_give_crawlers_and_link_previews_a_real_head(tmp_path=None):
@@ -5859,7 +6028,7 @@ def test_every_short_form_on_the_map_is_in_its_glossary():
     terms = ["expected shortfall", "var 95", "t+30", "ornstein-uhlenbeck", "ar(1)", "long-run vol",
              "calm", "baseline", "stressed", "beta", "vol", "daily closes", "days fitted",
              "perimeter", "breach", "rings", "shock correlation", "leverage", "shocks widened",
-             "drawdown cushion", "flyer", "anchor"]
+             "anchor effect", "flyer", "anchor"]
     missing = [t for t in terms if t not in gloss]
     assert not missing, f"short forms the glossary does not define: {missing}"
     btn = re.search(r'<button[^>]*id="btnExplain"[^>]*>', html).group(0)
@@ -5883,7 +6052,7 @@ def test_the_pairing_never_shows_pp_or_percent_for_a_points_gap():
     html = (root / "prototypes" / "war_room.html").read_text(encoding="utf-8")
     assert not re.findall(r"[^A-Za-z]pp[^A-Za-z]", html), "the map still prints a 'pp' unit"
     assert "shallower" in html and "deeper" in html, \
-        "the map must say which way the cushion points, in words"
+        "the map must say which way the anchor effect points, in words"
     src = (root / "main.py").read_text(encoding="utf-8")
     assert 'bt["cushion"]:+.0%' not in src, "the page prints a points gap as %"
     assert '"cushion": "{:+.1%}"' not in src, "the page prints a points gap as %"
@@ -6238,27 +6407,27 @@ def test_the_pair_audit_download_retries_a_name_the_feed_dropped_and_fails_one_i
 def test_the_download_asks_again_only_for_a_dropped_name_and_only_with_budget():
     """ME-14: the lock that dropped BA from the audit can drop a name from a
     visitor's basket in the same chokepoint. A name that comes back empty is
-    asked for again, alone, at most twice: dropped once it is served and
-    cached; never served it stays missing, uncached and left out exactly as
-    before; with nothing dropped there is no extra request at all; and with
+    asked for again, alone, at most twice if it is a symbol we know is real
+    (2026-11-13 audit): dropped once it is served and cached; never served it
+    stays missing, uncached and left out exactly as before; with nothing dropped there is no extra request at all; and with
     no budget left the retry does not spend what is not there."""
     import src.ingestion as ing
     with _FakeYahoo() as fy:                              # the normal path
-        ing._download_close_volume(["AAA", "BBB"], "2y")
-        assert fy.downloads == [["AAA", "BBB"]], f"extra requests: {fy.downloads}"
-    with _FakeYahoo(flaky={"BBB": 1}) as fy:              # dropped once
-        close, _ = ing._download_close_volume(["AAA", "BBB"], "2y")
-        assert fy.downloads == [["AAA", "BBB"], ["BBB"]], fy.downloads
-        assert close["BBB"].notna().sum() > 100, "the second request was not used"
-        assert pathlib.Path(ing._raw_path("BBB", "2y")).is_file(), "served but not cached"
-    with _FakeYahoo(flaky={"BBB": 99}) as fy:             # never served
-        close, _ = ing._download_close_volume(["AAA", "BBB"], "2y")
-        assert fy.downloads == [["AAA", "BBB"], ["BBB"], ["BBB"]], fy.downloads
-        assert close["BBB"].isna().all(), "a name never served was filled in"
-        assert not pathlib.Path(ing._raw_path("BBB", "2y")).exists(), "a failure was cached"
-        px = ing.fetch_prices(["AAA", "BBB"], use_cache=False)
-        assert "BBB" not in px.columns, "left out, as a name the feed has no data for"
-    with _FakeYahoo(flaky={"BBB": 1}) as fy:              # no budget for a retry
+        ing._download_close_volume(["AAPL", "MSFT"], "2y")
+        assert fy.downloads == [["AAPL", "MSFT"]], f"extra requests: {fy.downloads}"
+    with _FakeYahoo(flaky={"AAPL": 1}) as fy:              # dropped once
+        close, _ = ing._download_close_volume(["AAPL", "MSFT"], "2y")
+        assert fy.downloads == [["AAPL", "MSFT"], ["AAPL"]], fy.downloads
+        assert close["AAPL"].notna().sum() > 100, "the second request was not used"
+        assert pathlib.Path(ing._raw_path("AAPL", "2y")).is_file(), "served but not cached"
+    with _FakeYahoo(flaky={"AAPL": 99}) as fy:             # never served
+        close, _ = ing._download_close_volume(["AAPL", "MSFT"], "2y")
+        assert fy.downloads == [["AAPL", "MSFT"], ["AAPL"], ["AAPL"]], fy.downloads
+        assert close["AAPL"].isna().all(), "a name never served was filled in"
+        assert not pathlib.Path(ing._raw_path("AAPL", "2y")).exists(), "a failure was cached"
+        px = ing.fetch_prices(["AAPL", "MSFT"], use_cache=False)
+        assert "AAPL" not in px.columns, "left out, as a name the feed has no data for"
+    with _FakeYahoo(flaky={"AAPL": 1}) as fy:              # no budget for a retry
         spent = {"n": 0}
 
         def budget(*a, **k):
@@ -6266,9 +6435,95 @@ def test_the_download_asks_again_only_for_a_dropped_name_and_only_with_budget():
             if spent["n"] > 1:
                 raise ing.BudgetExhausted("spent")
         ing.check_budget = budget
-        close, _ = ing._download_close_volume(["AAA", "BBB"], "2y")
-        assert fy.downloads == [["AAA", "BBB"]], f"a retry spent a spent budget: {fy.downloads}"
-        assert close["BBB"].isna().all()
+        close, _ = ing._download_close_volume(["AAPL", "MSFT"], "2y")
+        assert fy.downloads == [["AAPL", "MSFT"]], f"a retry spent a spent budget: {fy.downloads}"
+        assert close["AAPL"].isna().all()
+
+
+def test_a_host_setting_that_is_not_its_shape_falls_back_to_the_default():
+    """2026-11-13 audit: the support and contact e-mails, the phone and the
+    site URL went from the host's environment into HTML attributes, a mailto
+    link and robots.txt as typed. Only John's Railway account sets them, but a
+    stray quote or newline would break the page or add robots rules. Each is
+    checked against its shape when read; anything else is the default."""
+    import os
+
+    from src.observability import host_setting
+    import tools.public_files as pf
+
+    cases = {
+        "SUPPORT_EMAIL": ("help@example.com",
+                          ['a@b.com"><script>alert(1)</script>', "a@b.com\nBcc: x@y.z", "not-an-email"]),
+        "CONTACT_EMAIL": ("john@example.org", ["<b>@x.com", "x@y.com?subject=hi"]),
+        "SUPPORT_PHONE": ("(770) 265-9930", ["770<script>", "+1 770 265 9930\n<b>"]),
+        "SITE_URL": ("https://meliona.example.com",
+                     ["https://x.com\nDisallow: /", "http://x.com", "javascript:alert(1)",
+                      'https://x.com/"><script>']),
+    }
+    saved = {k: os.environ.get(f"MELIONA_{k}") for k in cases}
+    try:
+        for name, (good, bad) in cases.items():
+            os.environ[f"MELIONA_{name}"] = good
+            assert host_setting(name, "DEFAULT") == good, f"{name}: a good value was refused"
+            for value in bad:
+                os.environ[f"MELIONA_{name}"] = value
+                assert host_setting(name, "DEFAULT") == "DEFAULT", f"{name} took {value!r}"
+        os.environ["MELIONA_SUPPORT_PHONE"] = "off"
+        assert host_setting("SUPPORT_PHONE", "DEFAULT") == "off", "the phone's off switch broke"
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(f"MELIONA_{k}", None)
+            if v is not None:
+                os.environ[f"MELIONA_{k}"] = v
+    src = pathlib.Path(pf.__file__).read_text(encoding="utf-8")
+    assert 'host_setting("SITE_URL"' in src, "public_files reads the site URL around the check"
+
+
+def test_a_typo_is_one_quiet_log_line_not_an_incident():
+    """2026-11-13 audit: every typed basket with no data logged an ERROR and a
+    full traceback, and after the 15-minute cooldown a made-up name costs no
+    Yahoo request - so a script could rerun one 600 times a minute and bury
+    real incidents in the host's log. A typo gets one INFO line, no traceback;
+    a preset with no data (the feed is down) is still an incident."""
+    import ast
+    import logging
+
+    from src import observability
+
+    records = []
+
+    class Keep(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("meliona.session")
+    keep, before = Keep(level=logging.DEBUG), logger.level
+    logger.addHandler(keep)
+    logger.setLevel(logging.DEBUG)
+    try:
+        observability.log_no_data("ref123", "load_universe")
+    finally:
+        logger.removeHandler(keep)
+        logger.setLevel(before)
+    assert [r.levelno for r in records] == [logging.INFO], records
+    assert "ref123" in records[0].getMessage() and "\n" not in records[0].getMessage()
+    assert records[0].exc_info is None
+
+    main = (pathlib.Path(__file__).resolve().parents[1] / "main.py").read_text(encoding="utf-8")
+    handler = next(h for node in ast.walk(ast.parse(main)) if isinstance(node, ast.Try)
+                   for h in node.handlers
+                   if isinstance(h.type, ast.Name) and h.type.id == "NoDataError")
+    branch = next(n for n in handler.body if isinstance(n, ast.If))
+    assert "PRESETS" in ast.unparse(branch.test), "the incident must hang on a preset basket"
+
+    def called(nodes):
+        return {n.func.id if isinstance(n.func, ast.Name) else n.func.attr
+                for node in nodes for n in ast.walk(node) if isinstance(n, ast.Call)}
+    unbranched = [n for n in handler.body if n is not branch]
+    assert "log_incident" in called(branch.body), "a preset with no data is an incident"
+    assert "log_incident" not in called(branch.orelse) | called(unbranched), \
+        "a typed basket with no data logs an incident"
+    assert "log_no_data" in called(branch.orelse)
 
 
 def test_made_up_symbols_cannot_spend_the_days_yahoo_budget():
@@ -6312,6 +6567,31 @@ def test_made_up_symbols_cannot_spend_the_days_yahoo_budget():
                 except ing.NoDataError:
                     pass
             assert fy.downloads[-2:] == [["AAPL"], ["AAPL"]], "a suggested name was locked out"
+        finally:
+            globals()["_fake_history"] = real_hist
+
+
+def test_a_real_name_beside_made_up_ones_does_not_triple_their_cost():
+    """2026-11-13 audit: the 11-12 fix stopped retrying a download that brought
+    back nothing, but one real name in the basket brought back something, so
+    every made-up name beside it was asked for three times - three times the
+    budget per rerun. Only a symbol we know is real (a suggested name or an
+    anchor) is asked for again; Yahoo dropping one for a moment still heals."""
+    import src.ingestion as ing
+
+    fake = ["ZZZZ1", "ZZZZ2", "ZZZZ3"]
+    with _FakeYahoo(flaky={"AAPL": 1}) as fy:          # yahoo drops AAPL once
+        real_hist = globals()["_fake_history"]
+        globals()["_fake_history"] = lambda t, years=2.0: (
+            __import__("yfinance.utils", fromlist=["x"]).empty_df() if t.startswith("ZZZZ")
+            else real_hist(t, years))
+        try:
+            close, _ = ing._download_close_volume(["SPY", *fake], "2y")
+            assert fy.downloads == [["SPY", *fake]], f"made-up names asked again: {fy.downloads}"
+            assert list(close.columns.dropna()) and close["SPY"].notna().any()
+            close, _ = ing._download_close_volume(["AAPL", "MSFT"], "2y")
+            assert fy.downloads[1:] == [["AAPL", "MSFT"], ["AAPL"]], fy.downloads
+            assert close["AAPL"].notna().any(), "a real name Yahoo dropped once never came back"
         finally:
             globals()["_fake_history"] = real_hist
 
@@ -6628,7 +6908,7 @@ def test_the_contact_form_writes_to_john_and_linkedin_is_the_second_way():
     # John, 2026-11-09: his own words, first person, passionate about building
     # tools with AI and still corporate - no promise, no advice
     assert hero.ABOUT_BIO.startswith("Hello! I am John") and "Building tools with AI" in hero.ABOUT_BIO
-    assert "check every number" in hero.ABOUT_BIO
+    assert "check every number" in hero.ABOUT_BIO and "what I got wrong" in hero.ABOUT_BIO
     assert not any(w in hero.ABOUT_BIO.lower() for w in ("guarantee", "should buy", "will make", "!!"))
     assert "&amp; Analytics" in hero.about_html(), "the bio's ampersand is escaped in the page"
 
@@ -7272,6 +7552,263 @@ def test_the_story_and_the_faq_say_the_same_thing():
     assert "cannot say how a stock will do" in story, "the story must say it forecasts nothing"
 
 
+def test_the_page_is_confident_and_says_it_can_be_wrong():
+    """John, 2026-11-13: "have confidence but have humbleness". The page keeps
+    its confident, true claims (every number computed from live prices and
+    checked a second way, a trading desk's bar, John replies within 2 business
+    days) and promises no outcome. Where it explains the numbers it also says,
+    as a fact of every model, that they can be wrong, and asks to hear about a
+    mistake so it can be fixed and learned from."""
+    import re
+    import hero
+    import tools.public_files as pf
+    root = pathlib.Path(__file__).resolve().parent.parent
+    main = (root / "main.py").read_text(encoding="utf-8")
+    thanks = re.sub(r"<[^>]+>", " ", (root / "public" / "thanks.html").read_text(encoding="utf-8"))
+    orient = main[main.index('<div class="orient-f">'):main.index("# ---- The cockpit")]
+    faq = " ".join(a for _, a in hero.FAQS)
+    story = " ".join(hero.STORY)
+    words = " ".join([hero.HERO_SUB, hero.ABOUT_BIO, story, faq, thanks, orient, pf.DESCRIPTION]).lower()
+    for promise in ("guarantee", "risk-free", "can't lose", "cannot lose", "will make you",
+                    "no risk", "always right", "never wrong"):
+        assert promise not in words, f"the page promises an outcome: {promise!r}"
+    # confident: John's own lines stay (2026-11-13)
+    assert "every number is computed" in orient.lower() and "check every number" in hero.ABOUT_BIO
+    assert hero.RESPONSE_TIME == "John replies within 2 business days."
+    assert "a barrier is fixed as a defect" in main
+    # humble: the cons are said out loud
+    for name, text in (("the FAQ", faq), ("the story", story)):
+        assert "wrong" in text.lower(), f"{name} must say the numbers can be wrong"
+    assert "estimate" in orient.lower(), "How to use this page must call each number an estimate"
+    assert re.search(r"tell (john|me)", (faq + story + hero.ABOUT_BIO).lower()), \
+        "invite the visitor to point out a mistake"
+    assert re.search(r"\bfix", story.lower()) and re.search(r"\blearn", story.lower()), \
+        "say mistakes get fixed and learned from"
+
+
+def test_the_cone_says_its_own_numbers_and_ends_on_the_last_day():
+    """John, 2026-11-17 (Bklit UI's end labels and reference mark): the cone
+    printed no number, and the link to the big number sat in a closed drawer.
+    Its right edge now carries the day-252 best 5, median and worst 5, and the
+    headline CVaR on the same scale - each the engine's own figure - while the
+    audits' trace order stays and the axis still ends on the last day."""
+    import ast
+    import plotly.graph_objects as go
+    tree = ast.parse((pathlib.Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8"))
+    keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ("fan_chart", "_style_fig"))
+            or (isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                and all(isinstance(t, ast.Name) and t.id.isupper() for t in n.targets))]
+    ns = {"np": np, "go": go}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), "main.py", "exec"), ns)  # nosec B102
+    days = np.arange(0, 253)
+    bands = {"days": days, **{k: v * days / 252 for k, v in
+                              (("p5", -0.162), ("p25", 0.02), ("p50", 0.167), ("p75", 0.33), ("p95", 0.627))}}
+    fig = ns["fan_chart"](bands, 0.226)
+    assert [t.name for t in fig.data[:4]] == ["p95", "p5", "p75", "p25"], "the audits' trace order moved"
+    labels = [a.text for a in fig.layout.annotations]
+    assert labels[:3] == ["62.7%", "16.7%", "-16.2%"], labels
+    assert labels[3] == "<b>Bad-year loss 22.6%</b>", labels
+    assert [sh.y0 for sh in fig.layout.shapes if sh.type == "line" and sh.y0 == sh.y1][-1] == -22.6
+    assert tuple(fig.layout.xaxis.range) == (0, 252), "the axis runs past the simulated year"
+    assert not ns["fan_chart"](bands, -0.01).layout.shapes[1:], "a gain is drawn as a bad-year loss"
+
+
+def test_the_books_figure_column_repeats_only_its_sentence():
+    """John, 2026-11-17 (a card's stat column, after Kokonut UI): each lead and
+    anchor shows its ticker, share, grit and partner beside its sentence. The
+    share is the sentence's own figure, the bar is drawn to the largest share,
+    and the drawer's other rows get no column."""
+    import re
+    at, restore = _offline_app()
+    try:
+        rows = [m.value for m in at.markdown if 'class="book-row' in m.value]
+    finally:
+        restore()
+    figs = [r for r in rows if 'class="book-figs"' in r]
+    assert figs, "no figure column on the page"
+    for r in rows:
+        assert ('class="book-figs"' in r) == ("is-flyer" in r or "is-cushion" in r), r[:90]
+    for r in figs:
+        sentence = re.search(r'class="book-text">(.*?)</div>', r, re.S).group(1)
+        share = re.search(r"<span>(\d+\.\d%) of the book</span>", r).group(1)
+        assert f"{share} of the book" in sentence, (share, sentence[:80])
+        bar = int(re.search(r'book-bar" style="width:(\d+)%', r).group(1))
+        assert 0 <= bar <= 100
+    assert any('width:100%' in r for r in figs), "no row is drawn as the largest share"
+
+
+def test_the_faq_is_five_questions_a_reader_opens():
+    """John, 2026-11-17 (Watermelon UI's FAQ blocks): five long answers stood
+    open in an uneven grid. Each is now a question row a reader opens, native
+    <details> (no script), all closed at first, every answer still in the page."""
+    import re
+    import hero
+    shown = hero.faq_html()
+    rows = re.findall(r'<details class="faq-row">(.*?)</details>', shown, re.S)
+    assert len(rows) == len(hero.FAQS) == 5 and "<details open" not in shown
+    for row, (q, _a) in zip(rows, hero.FAQS):
+        assert re.match(r'<summary><h3 class="faq-q">', row), row[:60]
+
+
+def test_design_work_starts_from_the_rulebook_and_the_five_sources():
+    """John, 2026-11-17: every design rule from every session in one file, and
+    "every design session from here on out will have to go for these skills
+    first before anything gets designed", using the five sites he named. The
+    rulebook exists and covers each part of the page, CLAUDE.md sends design
+    work to it and to the ui-sources skill before anything else, and the
+    skill sends readers back to the rulebook."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    book = (root / "docs" / "design" / "DESIGN-RULES.md").read_text(encoding="utf-8")
+    for part in ("## Before any design work", "## John's five UI sources", "## Look and palette",
+                 "## Type", "## Layout and spacing", "## Motion and scrolling", "## Words and tone",
+                 "## Accessibility", "## Phones and tablets", "## Charts and the Risk Topology map",
+                 "## Drawers, tabs and other controls", "## Hero, About, story, FAQ, contact and footer",
+                 "## Images, crest, banners and link preview", "## Loading and app feel",
+                 "## Process rules for design work", "## Turned down by John", "## History"):
+        assert part in book, f"the rulebook has no section {part!r}"
+    for source in ("Motion Primitives", "Watermelon UI", "Kokonut UI", "Bklit UI", "Anime.js"):
+        assert source in book, f"the rulebook does not name {source}"
+    claude = (root / "CLAUDE.md").read_text(encoding="utf-8")
+    first = claude[:claude.index("## What this is")]
+    assert "docs/design/DESIGN-RULES.md" in first and "ui-sources" in first, \
+        "CLAUDE.md does not send design work to the rulebook and the five sources first"
+    # every test the rulebook names as an enforcer is a real test
+    import re
+    tests = "".join(f.read_text(encoding="utf-8") for f in (root / "tests").glob("*.py"))
+    named = set(re.findall(r"`(test_[a-z0-9_]+)`", book))
+    assert named and not {t for t in named if f"def {t}(" not in tests}, \
+        f"the rulebook names tests that do not exist: {sorted(t for t in named if f'def {t}(' not in tests)}"
+    assert "john4000" not in book, "John's own address belongs only in the contact UI and PRIVACY.md"
+    skill = (root / ".claude" / "skills" / "ui-sources" / "SKILL.md").read_text(encoding="utf-8")
+    assert "docs/design/DESIGN-RULES.md" in skill, "the ui-sources skill does not point to the rulebook"
+
+
+def test_the_web_interface_guidelines_review_holds():
+    """John, 2026-11-17: run Vercel's web-design-guidelines over the page. It
+    found three things the house rules also forbid: the 404, offline and
+    thank-you pages switched the focus outline off (a colour change alone), the
+    new FAQ rows wore an ink ring instead of the house's text-bronze one, and
+    the contact form's name field gave the browser no autofill hint."""
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    for page in ("404.html", "offline.html", "thanks.html"):
+        css = (root / "public" / page).read_text(encoding="utf-8")
+        assert not re.search(r"focus-visible[^{]*\{[^}]*outline:\s*none", css), f"{page} hides the focus ring"
+        assert re.search(r":focus-visible\s*\{\s*outline:\s*2px solid #(6A5030|C6A26B); outline-offset: 3px", css), \
+            f"{page} has no house focus ring"
+    app = (root / "static" / "app.css").read_text(encoding="utf-8")
+    assert ".faq-row > summary:focus-visible { outline: 2px solid #6A5030; outline-offset: 3px; }" in app
+    main = (root / "main.py").read_text(encoding="utf-8")
+    name = main[main.index('st.text_input("Your name (optional)"'):][:200]
+    assert 'autocomplete="name"' in name, "the name field gives the browser no autofill hint"
+
+
+def test_streamlits_static_bundle_goes_out_gzipped_and_compressed_once():
+    """John, 2026-11-17 (the chrome-devtools speed check): a phone on 4G waited
+    6.9 s for the headline, most of it 9.8 MB of Streamlit's JavaScript sent
+    raw. Streamlit skips gzip on /static/ because Python would recompress on
+    every hit; these files are content-hashed and immutable, so serve.py
+    compresses each one once, keeps it, and sends it to any client that
+    accepts gzip (21 MB of text becomes about 6 MB). Nothing else changes:
+    other paths, errors, fonts, and clients without gzip get the raw bytes."""
+    import asyncio
+    import gzip
+    import serve
+    assert any(m.cls is serve.StaticGzip for m in serve.app._user_middleware), "serve.py does not compress"
+    body = b"function x(){return 1}" * 400
+    calls = []
+
+    def inner(status, ctype, payload):
+        async def app(scope, receive, send):
+            calls.append(scope["path"])
+            await send({"type": "http.response.start", "status": status,
+                        "headers": [(b"content-type", ctype), (b"content-length", str(len(payload)).encode())]})
+            await send({"type": "http.response.body", "body": payload[:100], "more_body": True})
+            await send({"type": "http.response.body", "body": payload[100:]})
+        return app
+
+    def run(app, path, enc=b"gzip, br", method="GET"):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(m):
+            sent.append(m)
+        scope = {"type": "http", "method": method, "path": path, "headers": [(b"accept-encoding", enc)]}
+        asyncio.run(app(scope, receive, send))
+        head = dict(sent[0]["headers"])
+        return sent[0]["status"], head, b"".join(m.get("body", b"") for m in sent[1:])
+
+    mw = serve.StaticGzip(inner(200, b"text/javascript", body))
+    status, head, out = run(mw, "/static/js/index.abc123.js")
+    assert status == 200 and head[b"content-encoding"] == b"gzip" and b"accept-encoding" in head[b"vary"].lower()
+    assert gzip.decompress(out) == body and int(head[b"content-length"]) == len(out) < len(body) / 3
+    again = run(mw, "/static/js/index.abc123.js")
+    assert again[2] == out and "/static/js/index.abc123.js" in mw.cache, "the second visitor does not reuse the first gzip"
+    assert run(mw, "/static/js/index.abc123.js", enc=b"identity")[2] == body, "a client without gzip got gzip"
+    assert run(mw, "/static/js/index.abc123.js", method="HEAD")[1].get(b"content-encoding") is None
+    for path, status_, ctype in (("/app/static/app.css", 200, b"text/css"), ("/static/js/missing.js", 404, b"text/plain"),
+                                 ("/static/media/font.woff2", 200, b"font/woff2"), ("/", 200, b"text/html")):
+        _s, h, o = run(serve.StaticGzip(inner(status_, ctype, body)), path)
+        assert h.get(b"content-encoding") is None and o == body, f"{path} was changed"
+
+
+def test_made_up_static_paths_cannot_fill_the_gzip_cache():
+    """2026-11-17 review of #78: any made-up /static/ path gets Streamlit's page
+    back (200, text/html), and StaticGzip kept a copy per path. About 1,024
+    requests - under the rate limit - filled its cache with junk, after which
+    the real bundle was never kept and every visitor's load recompressed about
+    21 MB on the one shared process. Only the bundle's own files are kept."""
+    import asyncio
+    import gzip
+    import serve
+    page = b"<!doctype html><html>" + b"x" * 6000
+    js = b"function x(){return 1}" * 400
+
+    async def streamlit(scope, receive, send):      # the fallback: any unknown path is the page
+        real = scope["path"] == "/static/js/index.abc123.js"
+        body, ctype = (js, b"text/javascript") if real else (page, b"text/html; charset=utf-8")
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", ctype)]})
+        await send({"type": "http.response.body", "body": body})
+
+    def get(mw, path):
+        sent = []
+
+        async def receive():
+            return {"type": "http.request"}
+
+        async def send(m):
+            sent.append(m)
+        scope = {"type": "http", "method": "GET", "path": path, "headers": [(b"accept-encoding", b"gzip")]}
+        asyncio.run(mw(scope, receive, send))
+        return b"".join(m.get("body", b"") for m in sent[1:])
+
+    mw = serve.StaticGzip(streamlit)
+    for i in range(serve.GZIP_CACHE_MAX + 50):
+        get(mw, f"/static/made-up-{i}.js")
+    assert not any("made-up" in p for p in mw.cache), \
+        f"{sum('made-up' in p for p in mw.cache)} made-up paths kept"
+    assert gzip.decompress(get(mw, "/static/js/index.abc123.js")) == js
+    assert "/static/js/index.abc123.js" in mw.cache, "the real bundle file was not kept"
+
+
+def test_the_deep_scan_reads_book_cards_by_their_class_not_their_shape():
+    """Live audit 10 on c5e5130 (2026-11-17): the Book's lead and anchor rows
+    gained a figure column, a third cell, and deep_scan's card reader - "a div
+    with exactly two children" - stopped seeing them: "cards: 0 lead, 0 anchor"
+    against a headline of 12 names. Cards are read as .book-row with a
+    .book-role first cell, so a new cell in a row never hides it again."""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    scan = (root / "tools" / "deep_scan.mjs").read_text(encoding="utf-8")
+    reader = scan[scan.index("async function bookState()"):scan.index("await step('the book'")]
+    assert "children.length === 2" not in reader, "the card reader counts a row's cells again"
+    assert ".book-row" in reader and "classList.contains('book-role')" in reader
+    main = (root / "main.py").read_text(encoding="utf-8")
+    assert '<div class="book-row {_ROW[_d.role]}"><div class="book-role">' in main, \
+        "the page's card markup moved; update deep_scan's reader with it"
+
+
 def test_a_waiting_press_yields_only_to_the_readers_own_hand():
     """Live audit 8c early, PR #51 (2026-11-06, intermittent): "Skip to the
     analysis", pressed 200 ms after it appeared, waited for #analysis, then
@@ -7453,19 +7990,28 @@ def test_motion_is_calm_enough_to_read_while_scrolling():
     unfocuses my eyes", and forcing the page past its top showed a gap. A
     reader's eye tracks the page up and down; blocks swinging in from the
     sides, turning like cards (a 3D turn smears the text) and a hull still
-    drifting 1.7 s after the wheel stopped all fight it. So: every block
-    arrives the one calm way - a short rise and a fade - the wheel settles in
-    well under a second, and the page has hard ends, no stretch."""
+    drifting 1.7 s after the wheel stopped all fight it. So the wheel settles
+    in well under a second and the page has hard ends, no stretch.
+    John, 2026-11-13, asked for the blocks to be SEEN arriving, "coming in from
+    the left side or the right side": headings slide from the left, a block
+    beside another from its own side, the rest rise - each a short move with
+    one soft landing, and still nothing turns or zooms."""
     import re
     root = pathlib.Path(__file__).resolve().parent.parent
     js = (root / "static" / "reveal.js").read_text(encoding="utf-8")
     css = (root / "static" / "app.css").read_text(encoding="utf-8")
     reveal = " ".join(b for sel, b in re.findall(r"([^{}]*\.reveal-item[^{}]*)\{([^}]*)\}", css))
-    for move in ("rotate", "perspective", "scale(", "--reveal-x"):
-        assert move not in reveal, f"an arrival still moves by {move}"
+    for move in ("rotate", "perspective", "scale("):
+        assert move not in reveal, f"an arrival moves by {move}"
     rise = re.search(r"--reveal-y: (\d+)px", css)
+    side = re.search(r"--reveal-x: (\d+)px", css)
     dur = re.search(r"--reveal-dur: (\d*\.?\d+)s", css)
-    assert rise and int(rise.group(1)) <= 20 and dur and float(dur.group(1)) <= 0.7
+    assert rise and 20 <= int(rise.group(1)) <= 32, "a rise the reader can see, and no more"
+    assert side and 24 <= int(side.group(1)) <= 48, "a slide the reader can see, and no more"
+    assert dur and 0.6 <= float(dur.group(1)) <= 0.9
+    assert ".reveal-on .reveal-item.rv-l {" in css and ".reveal-on .reveal-item.rv-r {" in css
+    # a phone stacks its columns: nothing slides in from the right there
+    assert "if (!wide.matches) return '';" in js and "function way(el)" in js
     for gone in ("function side(", "reveal-item--", "reveal-flat", "function band(", "var BAND"):
         assert gone not in js + css, f"{gone} is left over"
     tow = float(re.search(r"var TOW = (\d+(?:\.\d+)?);", js).group(1))
@@ -7893,6 +8439,40 @@ def test_ewma_is_spelled_out_in_plain_words_wherever_it_shows():
     assert cov_plain and plain in cov_plain.group(1).lower(), "the line under the choice"
     panic = src[src.index("Panic view: "):][:300]
     assert panic.startswith("Panic view: EWMA means ") and plain in panic.lower()
+
+
+def test_the_steady_name_is_called_the_anchor_never_the_cushion():
+    """John, 2026-11-13: "anywhere it says cushion, replace it with anchor ...
+    anchor sounds cooler." The steady name paired with a high-flyer is the
+    anchor in every word a visitor reads: the From evidence to allocation
+    sketch, its plaque and caption, the Book, and the map's labels and
+    glossary. (The code's own names - Role.CUSHION, the payload's "cushion"
+    field - are never shown and stay, so the audits keep their keys.)"""
+    import re
+    from src.narrative import SENTENCES
+    root = pathlib.Path(__file__).resolve().parent.parent
+    main = (root / "main.py").read_text(encoding="utf-8")
+    # every string a visitor can read in main.py: comments and the Role /
+    # CSS-class names (never rendered as words) taken out first
+    shown = re.sub(r"#[^\n]*", "", main)
+    shown = shown.replace("Role.CUSHION", "").replace("is-cushion", "")
+    assert "cushion" not in shown.lower(), \
+        [l.strip()[:90] for l in shown.splitlines() if "cushion" in l.lower()]
+    assert "the steady anchor" in main and 'class="c">anchor<' in main
+    assert not [k for k, t in SENTENCES.items() if "cushion" in t.lower()]
+    html = (root / "prototypes" / "war_room.html").read_text(encoding="utf-8")
+    html = re.sub(r"/\*.*?\*/", "", html, flags=re.S)
+    # any case, anything a browser accepts in the closing tag (CodeQL: a
+    # <SCRIPT> block or "</script bar>" would otherwise be read as markup and
+    # slip past the second check)
+    block = r"<script\b[^>]*>(.*?)</script\b[^>]*>"
+    markup = re.sub(block, "", html, flags=re.S | re.I)
+    assert "cushion" not in markup.lower(), "the map's markup still says cushion"
+    script = "".join(re.findall(block, html, flags=re.S | re.I))
+    said = [q for q in re.findall(r"'([^'\n]*)'", script) if "cushion" in q.lower()]
+    assert not said, f"the map still prints: {said}"
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    assert "cushion" not in readme.lower()
 
 
 def test_no_test_hides_below_the_script_runner():

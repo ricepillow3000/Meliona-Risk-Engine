@@ -35,7 +35,7 @@ from src.pairing import DEFENSIVE_ANCHOR_TICKERS
 from src.covariance import estimate_covariance, TRADING_DAYS
 from src.topology import build_map_payload, war_room_html
 from src.observability import (count_preset, count_session, host_setting, log_incident,
-                               log_session_start, new_session_ref, setup_logging)
+                               log_no_data, log_session_start, new_session_ref, setup_logging)
 from src.scenarios import HISTORICAL_REGIMES, replay_returns
 from hero import (N_PATHS, CONTACT_MAX, CONTACT_NAME_MAX, CONTACT_TOPICS, RESPONSE_TIME,
                   RESPONSE_WINDOW, about_html, contact_mailto, crest_engraving, faq_html, story_html,
@@ -717,7 +717,7 @@ def _style_fig(fig, height: int = 300):
     return fig
 
 
-def fan_chart(bands: dict):
+def fan_chart(bands: dict, cvar: float | None = None):
     """
     Monte Carlo outcome cone: median path + 25-75 and 5-95 percentile bands.
 
@@ -776,6 +776,25 @@ def fan_chart(bands: dict):
     )
     fig = _style_fig(fig, height=360)
     fig.update_layout(hoverlabel=dict(namelength=0))
+    # The cone says its own numbers (Bklit UI's end labels and reference mark,
+    # John 2026-11-17): the day-252 best 5, median and worst 5, each the
+    # engine's percentile, and the headline CVaR on the same scale - the
+    # average of the years below the worst-5 edge, so it sits under it.
+    end = d[-1]
+    for key in ("p95", "p50", "p5"):
+        v = float(p(bands[key])[-1])
+        fig.add_annotation(x=end, y=v, text=f"{v:.1f}%", xanchor="left", xshift=6,
+                           showarrow=False, font=dict(size=12, color="#5D574D"))
+    if cvar is not None and cvar > 0:
+        y = -float(f"{cvar * 100:.1f}")                  # exactly what the headline prints
+        fig.add_shape(type="line", x0=end * 0.9, x1=end, y0=y, y1=y,
+                      line=dict(color=CHARCOAL, width=1.5))
+        fig.add_annotation(x=end, y=y, text=f"<b>Bad-year loss {cvar:.1%}</b>", xanchor="right",
+                           yanchor="top", yshift=-3, showarrow=False,
+                           font=dict(size=12, color=CHARCOAL))
+    # the labels sit in the right margin; the axis still ends on the last day
+    fig.update_layout(margin=dict(r=56))
+    fig.update_xaxes(range=[d[0], end])
     # Aerodynamic axes: no tick spikes, breathing gridlines only
     fig.update_xaxes(ticks="", showspikes=False)
     fig.update_yaxes(ticks="", ticksuffix="%")
@@ -1059,8 +1078,8 @@ with _gungnir_zone:
                  "Borrowing fees, margin interest and forced buy-backs are not "
                  "included, so a real short would do worse than shown.")
 bearish = direction.startswith("Bearish")
-_bv_sk_a, _bv_sk_b = ("the short position", "the squeeze cushion") if bearish \
-    else ("the high-flyer", "the steady cushion")
+_bv_sk_a, _bv_sk_b = ("the short position", "the squeeze anchor") if bearish \
+    else ("the high-flyer", "the steady anchor")
 # Geometry note: the tether line runs CIRCUMFERENCE to CIRCUMFERENCE - its
 # endpoints sit on each circle's edge plus a 4px breath, never inside. All
 # labels are sized against the chord width where they sit, so nothing
@@ -1096,14 +1115,14 @@ with _gungnir_zone:
         f'<text x="268" y="184" text-anchor="middle" font-family="Georgia" font-size="11.5" fill="#5D574D">{_bv_sk_a}</text>'
         f'</svg>'
         f'<div style="font-family:Georgia;font-size:13px;color:#5D574D;max-width:560px;margin:2px auto 0;">'
-        f'{"Shorting flips the sketch: the tall block is the stock you bet against, the wide one a stock you own that tends to rise with it, softening a sudden jump. The areas match, so each carries the same share of the risk. A short can lose more than 100%, and borrowing costs are not included." if bearish else "The flyer is narrow and tall: little money, big price swings. The cushion is wide and short: more money, small swings. The areas match, so each name carries the same share of the risk."}'
+        f'{"Shorting flips the sketch: the tall block is the stock you bet against, the wide one a stock you own that tends to rise with it, softening a sudden jump. The areas match, so each carries the same share of the risk. A short can lose more than 100%, and borrowing costs are not included." if bearish else "The flyer is narrow and tall: little money, big price swings. The anchor is wide and short: more money, small swings. The areas match, so each name carries the same share of the risk."}'
         f'</div>'
         f'<a href="#engine" class="cta-btn" style="margin-top:14px;">'
         f'To the engine<span class="cta-arrow" aria-hidden="true"><svg viewBox="0 0 16 30" fill="none" xmlns="http://www.w3.org/2000/svg"><path class="shaft" d="M8 1 V22" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path class="head" d="M2.5 16.5 L8 22.5 L13.5 16.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a>'
         f'</div>',
         unsafe_allow_html=True)
     # Overwhelm audit (2026-10-29): the sketch and the equation stay - they draw
-    # the flyer-and-cushion pairing, the linkage the product is built on. The
+    # the flyer-and-anchor pairing, the linkage the product is built on. The
     # dense paragraph under them (equal risk contribution, correlation
     # cancelling, the covariance matrix) went: the engine below does that work.
     with _gg_plaque:
@@ -1114,7 +1133,7 @@ with _gungnir_zone:
         f'<span class="c">flyer</span></span>'
         f'<span class="gplaque-eqs">=</span>'
         f'<span class="gplaque-term"><span class="t">w<sub>2</sub>&sigma;<sub>2</sub></span>'
-        f'<span class="c">cushion</span></span>'
+        f'<span class="c">anchor</span></span>'
         f'</div>'
         f'<div class="gplaque-read">Money in a name (w) times how much its price '
         f'swings (&sigma;, volatility) is the same for both: a stock that swings '
@@ -1149,7 +1168,8 @@ st.markdown(
     'simulated years. Everything below it shows the working.</li>'
     '</ol>'
     '<div class="orient-f">Nothing here is advice. Every number is computed '
-    'from live end-of-day prices, and every tab shows its method.</div>'
+    'from live end-of-day prices, and every tab shows its method. Like any '
+    'model, it simplifies, so read each number as an estimate.</div>'
     '</div>',
     unsafe_allow_html=True)
 
@@ -1350,10 +1370,15 @@ try:
 except NoDataError as exc:
     # A visitor's typo is not a crash: say what to do, not "quote a reference".
     # NoDataError messages are written for visitors (src/ingestion.py).
-    log_incident(SESSION_REF, "load_universe", exc)
-    # Every name came from a preset, so nothing was typed and "check the
-    # spelling" points the wrong way: the feed is the likely cause.
-    st.error(FEED_DOWN_MSG if set(tickers) <= set(PRESETS[preset]) else str(exc))
+    if set(tickers) <= set(PRESETS[preset]):
+        # Every name came from a preset, so nothing was typed and "check the
+        # spelling" points the wrong way: the feed is down, an incident.
+        log_incident(SESSION_REF, "load_universe", exc)
+        st.error(FEED_DOWN_MSG)
+    else:
+        # A typo: one quiet line, so a script can't bury real errors.
+        log_no_data(SESSION_REF, "load_universe")
+        st.error(str(exc))
     st.stop()
 except Exception as exc:  # noqa: BLE001 - surface any fetch failure to the user
     st.error(f"Couldn't load market data: {safe_err('couldn-t-load-market-data', exc)}")
@@ -1796,7 +1821,7 @@ with v_col:
             'cone shows.'
             '</div>', unsafe_allow_html=True)
 with f_col:
-    st.plotly_chart(fan_chart(mc["path_bands"]), width="stretch", config=PLOTLY_CFG)
+    st.plotly_chart(fan_chart(mc["path_bands"], mc["cvar"]), width="stretch", config=PLOTLY_CFG)
     # Jump-diffusion resamples nothing, and a replay under 30 days falls back to
     # i.i.d. (block_days=1): both used to claim "crash weeks stay intact".
     _se_txt = (f" Luck alone could shift the big number by about "
@@ -1902,6 +1927,23 @@ with _bk_more:
         # come from narrative.role_label: a name with no role can still hold
         # capital, so "Left out" is only for a name holding none.
         _ROW = {Role.FLYER: "is-flyer", Role.CUSHION: "is-cushion", Role.EXCLUDED: "is-excluded"}
+        # The figures a reader looks for, pulled out beside each lead and anchor
+        # (a card's stat column, after Kokonut UI; John 2026-11-17): the same
+        # fields and formats its sentence prints, and a hairline bar scaled to
+        # the largest share on the page - each one a field the engine measured.
+        _top_w = max((x.final_weight for x in _the_book
+                      if x.role in (Role.FLYER, Role.CUSHION)), default=0) or 1
+
+        def _figs(d):
+            # grit ranks names within the visitor's basket, so a steady name
+            # from outside it shows none (test_the_books_grit_is_the_grit_zones_full_history_grit)
+            g = (f'<span>grit {d.grit_score:.0f} of 100</span>'
+                 if d.grit_score is not None and not d.is_fallback_anchor else "")
+            pair = f'<span>with {html.escape(d.partner)}</span>' if d.partner else ""
+            return (f'<div class="book-figs"><b>{html.escape(d.ticker)}</b>'
+                    f'<span>{d.final_weight:.1%} of the book</span>'
+                    f'<i class="book-bar" style="width:{100 * d.final_weight / _top_w:.0f}%"></i>'
+                    f'{g}{pair}</div>')
         for _d in _the_book:
             _lbl = role_label(_d)
             # A "No role" card shows what it holds, so "still held" can be
@@ -1920,7 +1962,8 @@ with _bk_more:
             # leaders and anchors stay on the page; the rest is in the drawer
             (_bk_lead if _d.role in (Role.FLYER, Role.CUSHION) else st).markdown(
                 f'<div class="book-row {_ROW[_d.role]}"><div class="book-role">{_lbl}</div>'
-                f'<div class="book-text">{_d.sentence()}{_flag}{_bind}</div></div>',
+                f'<div class="book-text">{_d.sentence()}{_flag}{_bind}</div>'
+                f'{_figs(_d) if _d.role in (Role.FLYER, Role.CUSHION) else ""}</div>',
                 unsafe_allow_html=True)
 
         read_me(
@@ -2411,7 +2454,7 @@ with _contact_slot:
         with _form_col:
             with st.form("contact_form", clear_on_submit=False, border=False):
                 _c_name = st.text_input("Your name (optional)", max_chars=CONTACT_NAME_MAX,
-                                        key="contact_name")
+                                        key="contact_name", autocomplete="name")
                 _c_topic = st.selectbox("Topic", CONTACT_TOPICS, key="contact_topic")
                 _c_msg = st.text_area("Message", max_chars=CONTACT_MAX, height=160,
                                       key="contact_message",

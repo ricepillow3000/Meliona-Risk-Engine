@@ -32,11 +32,12 @@ import pathlib
 import shutil
 import sys
 
-# MELEONA_SITE_URL is the name's spelling before 2026-10-28; a host variable
-# set under it still counts.
-SITE_URL = (os.environ.get("MELIONA_SITE_URL") or os.environ.get("MELEONA_SITE_URL") or
-    "https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app"
-).rstrip("/")
+from src.observability import host_setting
+
+# MELIONA_SITE_URL (or its pre-2026-10-28 spelling MELEONA_) overrides it; a
+# value that is not an https URL is ignored, so it can't add robots.txt rules.
+LIVE_URL = "https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app"
+SITE_URL = host_setting("SITE_URL", LIVE_URL).rstrip("/")
 TITLE = "Meliona · Portfolio Risk Engine"
 # What the page does today (ME-28 part 4: "factor exposures" left the page
 # with the 2026-10-29 cuts, so the description no longer names them).
@@ -171,7 +172,7 @@ def head_tags(site_url: str, build: str = "") -> str:
         f'<meta property="og:image:width" content="1200">\n'
         f'<meta property="og:image:height" content="627">\n'
         f'<meta property="og:image:alt" content="The Meliona crest and name beside '
-        f'its live audit on Yahoo Finance data: 727 of 728 checks passed">\n'
+        f'its live audit on Yahoo Finance data: 0 of 832 checks failed">\n'
         f'<meta name="twitter:card" content="summary_large_image">\n'
         # Structured data: a data block, never run - the meta CSP above sets no
         # script policy, and application/ld+json is not executed in any case.

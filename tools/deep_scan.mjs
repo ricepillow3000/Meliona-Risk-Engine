@@ -56,6 +56,12 @@ page.on('requestfailed', r => {
   // A navigation away aborts in-flight fetches; that is not a defect.
   if (!/ERR_ABORTED/.test(why)) failedRequests.push(`${why} ${r.url().slice(0, 120)}`);
 });
+// The largest message the server sends: server.maxMessageSize caps it, and the
+// same cap bounds what one inbound message may unpack to (2026-11-13 audit).
+let wsLargest = 0;
+page.on('websocket', ws => ws.on('framereceived', f => {
+  wsLargest = Math.max(wsLargest, typeof f.payload === 'string' ? Buffer.byteLength(f.payload) : f.payload.length);
+}));
 
 // A rerun is finished when the status widget is gone AND no element is still
 // marked stale - checked twice, because the widget can blink off mid-run.
@@ -355,8 +361,8 @@ await step('gungnir', async () => {
   ok(a.w * a.h === b.w * b.h, 'Gungnir: the two blocks have equal area (w1 s1 = w2 s2)', `${a.w}x${a.h} vs ${b.w}x${b.h}`);
   ok(Math.max(a.w / b.w, b.w / a.w) === Math.max(a.h / b.h, b.h / a.h) && Math.max(a.w / b.w, b.w / a.w) === 3,
      'Gungnir: the sketch is the plaque\'s 3:1 sentence', 'three times as volatile gets one third the capital');
-  ok(/w1σ1=w2σ2|w1σ1\s*=\s*w2σ2/.test(g.plaque.replace(/block 0[12]|flyer|cushion/g, '').replace(/\s+/g, '')), 'Gungnir: plaque states w1σ1 = w2σ2');
-  ok(g.labels.includes('the high-flyer') && g.labels.includes('the steady cushion'), 'Gungnir: long-side labels on the sketch');
+  ok(/w1σ1=w2σ2|w1σ1\s*=\s*w2σ2/.test(g.plaque.replace(/block 0[12]|flyer|anchor/g, '').replace(/\s+/g, '')), 'Gungnir: plaque states w1σ1 = w2σ2');
+  ok(g.labels.includes('the high-flyer') && g.labels.includes('the steady anchor'), 'Gungnir: long-side labels on the sketch');
 });
 
 // ---- 5. engine ------------------------------------------------------------------
@@ -483,10 +489,11 @@ await step('every preset', async () => {
 // ---- 6. the book ------------------------------------------------------------------
 async function bookState() {
   return page.evaluate(() => {
-    // A dossier card is the flex row whose first cell is its role label.
+    // A dossier card is a .book-row whose first cell is its role label; a lead
+    // or anchor row carries a third cell, its figure column (2026-11-17).
     const ROLES = ['Leads', 'Anchor', 'No role', 'Left out'];
-    const cards = [...document.querySelectorAll('[data-testid="stMarkdownContainer"] div')]
-      .filter(d => d.children.length === 2 && ROLES.includes(
+    const cards = [...document.querySelectorAll('[data-testid="stMarkdownContainer"] .book-row')]
+      .filter(d => d.firstElementChild?.classList.contains('book-role') && ROLES.includes(
         (d.firstElementChild.textContent || '').trim()
           .replace(d.firstElementChild.querySelector('.role-note')?.textContent.trim() || '', '').trim()));
     // the role cell holds the label, and on a NO ROLE card the weight it holds
@@ -704,7 +711,7 @@ await step('short side', async () => {
   await page.waitForFunction(() => /short/i.test(document.querySelector('.verdict-sentence')?.textContent || ''));
   await settle();
   const g = await page.evaluate(() => [...document.querySelectorAll('.st-key-gungnir_zone svg text')].map(t => t.textContent));
-  ok(g.includes('the short position') && g.includes('the squeeze cushion'), 'short: the Gungnir sketch relabels');
+  ok(g.includes('the short position') && g.includes('the squeeze anchor'), 'short: the Gungnir sketch relabels');
   ok(/short book/.test(await page.textContent('#engine')), 'short: the engine heading says short book');
   say('INFO', 'short: headline', `${prev} -> ${await verdict()}`);
   await coneAgrees('short book');
@@ -723,6 +730,13 @@ const noise = s => /favicon|Failed to load resource: the server responded with a
 ok(!consoleErrors.filter(e => !noise(e)).length, 'no console or script errors from boot to finish', consoleErrors.slice(0, 4).join(' | '));
 ok(!badResponses.length, 'no request answered with an error status', badResponses.slice(0, 4).join(' | '));
 ok(!failedRequests.length, 'no request failed outright', failedRequests.slice(0, 4).join(' | '));
+{
+  const { readFileSync } = await import('node:fs');
+  const cfg = readFileSync(new URL('../.streamlit/config.toml', import.meta.url), 'utf8');
+  const capMb = Number((cfg.match(/^maxMessageSize\s*=\s*(\d+)/m) || [])[1]);
+  ok(wsLargest > 0 && wsLargest <= capMb * 1e6 / 2, 'the largest message keeps half the message cap free',
+     `${(wsLargest / 1e3).toFixed(0)} KB of a ${capMb} MB cap`);
+}
 await browser.close();
 
 const n = s => results.filter(r => r.status === s).length;

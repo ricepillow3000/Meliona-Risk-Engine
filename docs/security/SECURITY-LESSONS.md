@@ -139,3 +139,36 @@ quietly:
 5,000-request day. Presets and cached baskets keep working (the warmer has its own budget and the cache serves
 them); only newly typed names wait until UTC midnight. Closing it needs a per-visitor outbound budget, which
 yfinance's download threads make hard to attribute - left until there is evidence of abuse.
+
+### 2026-11-13: full back-end audit (four cold readers: CI and supply chain, the data path, HTML/JS sinks, serve.py and netguard)
+No way in: no visitor text reaches HTML, a file path, a URL or a log line unchecked; the map's `esc()` held against
+`</script>`, quotes and U+2028 in every name, clicked and hovered in Chromium; every path trick on the hidden routes
+(`//_stcore/metrics`, `/_STCORE/...`, encoded dots) fell through to the page; netguard covers every Yahoo call and
+pip-audit is clean. Fixed, each test-first and planted (M46-M49):
+
+| Finding | Attack | Fix | Test |
+|---|---|---|---|
+| Cache names were 48 bits | made-up names drop out of the data but stay in the key, so a basket of one real name plus made-up ones can be searched offline (about half an hour on one GPU) until its file name equals a preset's, then typed while that slot is stale (after a deploy or a close): the preset's visitors get the stranger's basket | full sha256 file names | `test_a_crafted_basket_cannot_take_over_a_presets_cache_slot` |
+| Anchor shelf not protected from pruning | USMV is pulled by every page but is in no preset; baskets of cached names write four files a rerun with no Yahoo request, so ~375 reruns pushed it out, and with the day's budget spent the anchors failed for everyone | the anchor list joins the presets in the prune's keep set | `test_the_cache_budget_keeps_the_anchor_shelf` |
+| Dependabot PRs ran no audit | the audits ran only on `claude/**`, so the "every bump runs every check" promise was paper | `dependabot/**` added to the Live, Pair, Options and Container triggers | `test_dependabot_prs_run_every_audit` |
+| serve.py's server floated | starlette, uvicorn and websockets carry the headers, rate limits and the 256 KB cap, but only streamlit's ranges bound them | pinned exactly (Dependabot bumps them) | `test_every_dependency_is_pinned_to_an_exact_version` |
+| Secrets could enter a local image | the image's ignore file lacked `.gitignore`'s secret patterns | copied in | `test_a_local_image_build_leaves_secrets_out` |
+| A typo logged like a crash | a typed basket with no data wrote an ERROR and a full traceback; past the cooldown a made-up name costs no Yahoo request, so 600 reruns a minute buried real incidents | one INFO line (`log_no_data`); a preset with no data, the feed being down, is still an incident | `test_a_typo_is_one_quiet_log_line_not_an_incident` |
+| Made-up names retried beside a real one | the 11-12 fix skipped a retry only when NOTHING came back, so one real name in the basket had every made-up name beside it asked three times (73 requests for 1 real + 24 made-up, not 25) | only a symbol we know is real (suggested or an anchor) is asked again; Yahoo dropping one for a moment still heals | `test_a_real_name_beside_made_up_ones_does_not_triple_their_cost` |
+
+The four hardening items left open that day were closed the same day, each test-first and planted (M50-M53):
+
+| Finding | Fix | Test |
+|---|---|---|
+| Host settings reached HTML as typed (support and contact e-mails, phone, site URL) | `host_setting` checks each against its shape (an e-mail, a phone, an https URL) and falls back to the default, logging the name but not the value | `test_a_host_setting_that_is_not_its_shape_falls_back_to_the_default` |
+| One compressed websocket message could unpack to 16 MB before serve.py refused it | `server.maxMessageSize` 16 -> 1 MB, the same cap as the largest message out: measured at 103 KB over a full-depth deep scan fed 30 years per name; the deep scan now fails if any message takes more than half the cap | `test_deploy_config_keeps_the_visitor_out_of_the_operator_seat` |
+| The image's base was a tag | pinned to today's `python:3.13-slim` digest; Dependabot watches `docker/` and proposes the next one | `test_the_image_is_pinned_and_only_main_may_publish_it` |
+| `packages: write` was granted on every branch | publishing is its own job, on main only, after the image passed its checks | same test |
+
+### 2026-11-17: the gzip cache could be filled with made-up paths (review of #78)
+`serve.py`'s new `StaticGzip` kept one gzipped copy per `/static/` path, up to 1,024. Streamlit answers any made-up
+`/static/` path with its page (200, text/html), so about 1,024 requests - under the rate limit - filled the cache with
+junk, after which the real bundle was never kept and every visitor's load recompressed about 21 MB on the one shared
+process. Reproduced against the real app; fixed test-first (`test_made_up_static_paths_cannot_fill_the_gzip_cache`,
+planted as M55): the page fallback is still gzipped but never kept, so only the bundle's own files (~320) fill the
+cache. Lesson: a cache keyed by anything a visitor types is a visitor-keyed cache, however static the files behind it.
