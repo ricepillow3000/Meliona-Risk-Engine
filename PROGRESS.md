@@ -4,7 +4,7 @@ Paste this into a new chat session to bring it up to speed instantly.
 
 ---
 
-## Start here: where things stand (updated 2026-11-13)
+## Start here: where things stand (updated 2026-11-19)
 
 - **Live:** https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app
   (Railway deploys `main`; the Live audit on `main` proves the deployed
@@ -95,6 +95,20 @@ Paste this into a new chat session to bring it up to speed instantly.
   and an unbroken copy runs first - if it is already red, nothing else runs
   (`test_the_mutation_harness_refuses_a_copy_that_is_red_before_any_bug`).
   Re-run honestly, M35, M41, M55, M56 and M57 are caught by their own tests.
+  The Mutation check then ran all 57 on the honest harness: 57/57 caught.
+  The rest of the Dependabot backlog merged the same night, each with its
+  audits green: yfinance 1.7.0 -> 1.8.0 (#67; the stitch test passes on
+  1.8.0's real `yf.download`, so the pin moved; provenance gave the same
+  prices as on 1.7.0, EURUSD=X's one repaired bar included), and the GitHub
+  Actions majors checkout 7.0.1 (#40), setup-python 7.1.0 (#38), setup-node
+  7.1.0 (#39), download-artifact 8.0.2 (#41) and setup-qemu 4.4.0 (#37,
+  whose first real test was main's publish job: amd64 and arm64 built).
+  Pair and Options were cancelled on #37 and #39, whose files those audits
+  never run. Dependabot's five-PR cap for Actions had held back
+  upload-artifact and the docker build actions; their PRs come next week.
+  The two sessions coordinated merges by message (back end and front end)
+  and cancelled superseded runs: seven back-end PRs and the front end's #85,
+  each running all four audits, kept GitHub's runners queued for hours.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
   day, now one request per made-up name (2026-11-13); presets and cached
