@@ -801,6 +801,34 @@ def fan_chart(bands: dict, cvar: float | None = None):
     return fig
 
 
+def risk_by_name_fig(rc: pd.DataFrame):
+    """Risk by name as a dumbbell: each name's share of the money and its share
+    of the swings sit on one line, so the gap between them is the line's length."""
+    rc = rc.sort_values("risk_pct")          # plotly draws the first row at the bottom
+    names = list(rc.index)
+    w, r = rc["weight"].values * 100, rc["risk_pct"].values * 100
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=[v for a, b in zip(w, r) for v in (a, b, None)],
+        y=[v for n in names for v in (n, n, None)],
+        mode="lines", name="gap", line=dict(color=BRONZE, width=2),
+        hoverinfo="skip", showlegend=False))
+    fig.add_trace(go.Scatter(
+        x=w, y=names, mode="markers", name="dollar weight",
+        marker=dict(symbol="square", size=11, color=GOLD, line=dict(width=0)),
+        hovertemplate="%{y} weight: %{x:.1f}%<extra></extra>"))
+    fig.add_trace(go.Scatter(
+        x=r, y=names, mode="markers", name="risk share",
+        marker=dict(symbol="diamond", size=13, color=STONE, line=dict(width=0)),
+        hovertemplate="%{y} risk: %{x:.1f}%<extra></extra>"))
+    fig = _style_fig(fig, height=max(200, 30 * len(rc) + 80))
+    fig.update_layout(showlegend=True, xaxis_title_text="% of portfolio",
+                      legend=dict(orientation="h", y=1.14, x=0, font=dict(size=11)))
+    fig.update_xaxes(rangemode="tozero")
+    fig.update_yaxes(type="category")
+    return fig
+
+
 def panel_head(title: str, subtitle: str = "") -> None:
     """A section heading in the share banner's system (ME-28): the title as a
     caps kicker with its charcoal bar, the subtitle as the serif line under
@@ -2045,27 +2073,16 @@ with tab_breakdown:
     # every weight bar shrank and read as a risk/weight gap that was pure
     # leverage. Leverage scales the whole book and cannot change the split.
     rc = risk_contributions(base_weights, cov)
-    rc_fig = go.Figure()
-    rc_fig.add_trace(go.Bar(
-        y=list(rc.index), x=rc["weight"].values * 100, orientation="h",
-        name="dollar weight", marker=dict(color=GOLD),
-        hovertemplate="%{y} weight: %{x:.1f}%<extra></extra>"))
-    rc_fig.add_trace(go.Bar(
-        y=list(rc.index), x=rc["risk_pct"].values * 100, orientation="h",
-        name="risk share", marker=dict(color=STONE),
-        hovertemplate="%{y} risk: %{x:.1f}%<extra></extra>"))
-    rc_fig = _style_fig(rc_fig, height=max(200, 46 * len(rc)))
-    rc_fig.update_layout(
-        barmode="group", xaxis_title_text="% of portfolio", showlegend=True,
-        legend=dict(orientation="h", y=1.14, x=0, font=dict(size=11)))
+    rc_fig = risk_by_name_fig(rc)
     st.plotly_chart(rc_fig, width="stretch", config=PLOTLY_CFG)
     top = rc["risk_pct"].idxmax()
     st.caption(
-        f"Gold: the share of the money in each name. Dark: its share of the "
-        f"portfolio's swings (volatility). {top} causes the most "
-        f"({rc.loc[top, 'risk_pct']:.0%}). Equal money is not equal risk; switch "
-        "Weights to Risk parity to even out the dark bars."
-        + (f" Both bars are shares of the book itself; the {leverage:.2f}× "
+        f"Gold square: the share of the money in each name. Dark diamond: its "
+        f"share of the portfolio's swings (volatility). The line between them is "
+        f"the gap. {top} causes the most ({rc.loc[top, 'risk_pct']:.0%}). Equal "
+        "money is not equal risk; switch Weights to Risk parity to line the "
+        "diamonds up."
+        + (f" Both marks are shares of the book itself; the {leverage:.2f}× "
            "volatility target scales the whole book and does not change this "
            "split." if use_vt else "")
     )

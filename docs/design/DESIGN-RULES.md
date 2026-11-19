@@ -287,7 +287,7 @@ Details, the porting rules and what was turned down are in the `ui-sources` skil
 
 - **Plotly charts in the beige/bronze theme. No glow on charts.** Crosshair spikes are off.
 - **The cone** (after Bklit UI): its right edge prints the day-252 best 5%, median and worst 5%, plus the headline CVaR as a "Bad-year loss" mark — each the engine's own figure. The axis ends on the last day. — John, 2026-11-17 — `test_the_cone_says_its_own_numbers_and_ends_on_the_last_day`.
-- **Risk-by-name weights** are the unlevered base weights, so the two bars share one "% of portfolio" denominator.
+- **Risk by name is a dumbbell.** One row per name: a gold square at its share of the money, a dark diamond at its share of the swings, joined by a bronze hairline whose length is the gap. Rows run largest risk share on top. The two shares are the unlevered base weights' (one "% of portfolio" denominator), and the trace names `dollar weight` and `risk share` stay because deep_scan reads them. — John, 2026-11-19 (deferred on 2026-11-17 as "worth a later look") — `test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares`.
 - **Map design:**
   - Flat, near-opaque plates over a full-bleed matte terrain. Square panels with bronze crop marks, a framed and ticked plot, rhombus marks for names and the pairing, square toggles. — "a Swiss-grid map", 2026-10-30.
   - The film grain was removed later (2026-11-04).
@@ -458,7 +458,6 @@ chrome-devtools-mcp server (the guidance and a pinned speed check were used inst
   - Kokonut Liquid Glass, Card Flip, Particle and Gradient buttons, and Metric Card.
   - Bklit gradient areas, crosshair, glass pills, Projection Line and Live Line Chart.
   - Motion Primitives Tilt, Spotlight, Glow, Border Trail, Magnetic, Infinite Slider and Text Roll; Text Scramble.
-  - A dumbbell chart for "Risk by name" — deferred, "worth a later look".
 - Generated-site tells he listed (2026-11-10): gradient blobs, circle icons, purple, floating 3D shapes, identical feature cards, rainbow accents, buzzword copy, three-word headlines, FAQs that restate the question, emoji, vague calls to action, dead footer links, soft corners, no personality. Also spinners, blank screens, no tap feedback, and nothing shown offline.
 - AI-writing tells he listed (2026-11-02): em dashes, "It's not X. It's Y", random bold, emoji bullets, title case, one-line paragraphs, pivotal/moreover/serves as.
 

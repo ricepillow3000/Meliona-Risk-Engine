@@ -7613,6 +7613,46 @@ def test_the_cone_says_its_own_numbers_and_ends_on_the_last_day():
     assert not ns["fan_chart"](bands, -0.01).layout.shapes[1:], "a gain is drawn as a bad-year loss"
 
 
+def test_risk_by_name_is_a_dumbbell_of_the_engines_own_shares():
+    """John, 2026-11-19 (the dumbbell he deferred on 2026-11-17 as "worth a
+    later look"): the grouped bars drew two bars per name, and under equal
+    weight half of them were the same length; one row per name now carries a
+    gold square at its money share and a dark diamond at its risk share,
+    joined by a line whose length is the gap. The numbers stay the engine's
+    own, and deep_scan still finds the 'risk share' and 'dollar weight' traces."""
+    import ast
+    import pandas as pd
+    import plotly.graph_objects as go
+    text = (pathlib.Path(__file__).resolve().parent.parent / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    keep = [n for n in tree.body if (isinstance(n, ast.FunctionDef) and n.name in ("risk_by_name_fig", "_style_fig"))
+            or (isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+                and all(isinstance(t, ast.Name) and t.id.isupper() for t in n.targets))]
+    ns = {"np": np, "go": go, "pd": pd}
+    exec(compile(ast.Module(body=keep, type_ignores=[]), "main.py", "exec"), ns)  # nosec B102
+    assert "risk_by_name_fig" in ns, "no risk_by_name_fig in main.py"
+    rc = pd.DataFrame({"weight": [0.25, 0.25, 0.25, 0.25], "risk_pct": [0.10, 0.40, 0.20, 0.30]},
+                      index=["AAA", "BBB", "CCC", "DDD"])
+    fig = ns["risk_by_name_fig"](rc)
+    assert all(t.type == "scatter" for t in fig.data), [t.type for t in fig.data]
+    assert [t.name for t in fig.data] == ["gap", "dollar weight", "risk share"]
+    gap, money, risk = fig.data
+    order = ["AAA", "CCC", "DDD", "BBB"]
+    assert list(risk.y) == order and list(money.y) == order, "the largest risk share is not on top"
+    assert np.allclose(list(risk.x), [10, 20, 30, 40], rtol=0, atol=1e-9), list(risk.x)
+    assert np.allclose(list(money.x), [25, 25, 25, 25], rtol=0, atol=1e-9), list(money.x)
+    assert money.marker.symbol == "square" and risk.marker.symbol == "diamond", "meaning carried by colour alone"
+    assert gap.mode == "lines"
+    xs, ys = list(gap.x), list(gap.y)
+    for name in rc.index:
+        seg = [x for x, y in zip(xs, ys) if y == name and x is not None]
+        want = sorted([rc.loc[name, "weight"] * 100, rc.loc[name, "risk_pct"] * 100])
+        assert len(seg) == 2 and np.allclose(sorted(seg), want, rtol=0, atol=1e-9), (name, seg)
+    assert fig.layout.height == max(200, 30 * 4 + 80)
+    block = text[text.index('panel_head("Risk by name"'):text.index('panel_head("Return for the risk taken"')]
+    assert 'barmode="group"' not in block, "Risk by name is still grouped bars"
+
+
 def test_the_books_figure_column_repeats_only_its_sentence():
     """John, 2026-11-17 (a card's stat column, after Kokonut UI): each lead and
     anchor shows its ticker, share, grit and partner beside its sentence. The
