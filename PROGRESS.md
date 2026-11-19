@@ -4,7 +4,7 @@ Paste this into a new chat session to bring it up to speed instantly.
 
 ---
 
-## Start here: where things stand (updated 2026-11-13)
+## Start here: where things stand (updated 2026-11-19)
 
 - **Live:** https://summer-2026-quant-project-risk-engine-blueprint-production.up.railway.app
   (Railway deploys `main`; the Live audit on `main` proves the deployed
@@ -72,6 +72,40 @@ Paste this into a new chat session to bring it up to speed instantly.
   (`test_made_up_static_paths_cannot_fill_the_gzip_cache`, planted as M55;
   SECURITY-LESSONS.md, 2026-11-17). Lesson: a cache keyed by anything a
   visitor types is a visitor-keyed cache, however static the files behind it.
+- **2026-11-13 to 11-18, front-end session (PRs #73, #78, #80, all
+  merged and live; Live audit run 313 on main `2f51aa0` green, every step):**
+  - #73: the link preview and LinkedIn cover quote the newest live audit
+    receipt (`audit/live_audit_2026-11-13T101321Z.md`: 0 of 832 audit checks
+    failed, 178 of 178 source checks). Copy is confident and humble (John:
+    "have confidence but have humbleness"): his confident lines stay (2
+    business days, check every number, every number is computed, a barrier
+    is fixed as a defect) and the page says, as a fact of every model, that
+    it simplifies and can be wrong, and asks to hear about mistakes
+    (`test_the_page_is_confident_and_says_it_can_be_wrong`).
+  - #78: five ideas from John's five UI sources, rebuilt in the house style:
+    the cone labels its own p95/p50/p5 and the bad-year line (Bklit), chart
+    lines draw in once (Anime.js, in CSS), a gold trail in the footer index
+    (Motion Primitives), a figure column in the Book (Kokonut), the FAQ as
+    rows a reader opens (Watermelon). `docs/design/DESIGN-RULES.md` holds
+    every design rule from every session; CLAUDE.md sends design work there
+    and to the `ui-sources` skill first. John's five un-slop tools checked:
+    Vercel's web-design-guidelines installed (pinned, `.claude/skills/`);
+    impeccable's installer, awesome-design-md, chrome-devtools-mcp and
+    img2threejs turned down with reasons (`.claude/skills/THIRD_PARTY.md`).
+    A speed trace led `StaticGzip` in `serve.py`: on a 4G phone the largest
+    paint went 8.9 s -> 1.4 s and the download 10.7 MB -> 3.7 MB (#81 then
+    closed its cache hole, above). deep_scan reads the Book's cards by class.
+  - #80: the LinkedIn cover has no empty corner (John: "I don't like the
+    empty space"): only the profile photo's spot stays clear
+    (`test_the_linkedin_cover_leaves_no_empty_corner_beside_the_photo`).
+  - Left for John: upload `docs/brand/linkedin-banner@2x.png` to LinkedIn.
+    The rulebook is copied into the vault (10-Projects/Meleona).
+  - Lessons: a cone's labels widened its x-axis until it was pinned
+    (`range=[first, last day]`); a new class name (`f-mark`) collided with an
+    existing one and shrank the footer links (craft_check caught it); grit
+    is hidden for an outside anchor; the deep scan read cards by their shape
+    and broke when a column was added (read by class); force-push is denied,
+    so a squash-merged branch moves forward with `git merge -s ours`.
 - **Accepted risk, still open by choice:** a script inventing new made-up
   symbols on every rerun can spend the web process's 5,000-request Yahoo
   day, now one request per made-up name (2026-11-13); presets and cached
