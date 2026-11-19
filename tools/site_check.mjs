@@ -138,6 +138,16 @@ for (const [label, w, h] of [['desktop', 1440, 900], ['phone', 390, 844]]) {
       ok(await page.evaluate(() => !!window.__melionaNotice?.dock()), 'phone: shortcut back between the hero and the engine');
       await jump('tabs'); await page.waitForTimeout(600);
       ok(await page.evaluate(() => !window.__melionaNotice?.dock()), 'phone: shortcut gone after a jump straight past the engine to the tabs');
+      // Every chart in a tab is drawn at its box's width once the tab is open
+      // (2026-11-19: drawn at Plotly's 700px fallback, clipped on a phone).
+      for (const t of ['Risk Breakdown', 'Grit Zone']) {
+        await page.getByRole('tab', { name: t }).click();
+        await page.waitForTimeout(2500);
+        const w = await page.evaluate(() => [...document.querySelectorAll('[role="tabpanel"]:not([hidden]) .js-plotly-plot')]
+          .filter(g => g.offsetParent).map(g => [Math.round(g.querySelector('svg.main-svg').getBoundingClientRect().width),
+            Math.round(g.getBoundingClientRect().width)]));
+        ok(w.length && w.every(([s, b]) => Math.abs(s - b) <= 2), `phone: ${t}: every chart drawn at its box's width (${w.map(x => x.join(' in ')).join(', ')})`);
+      }
       await page.click('.m-notice-ok');
       const said = await page.evaluate(() => ({ shown: !!document.querySelector('.m-notice'),
         kept: (() => { try { return localStorage.getItem('meliona-cookie-notice'); } catch (e) { return 'blocked'; } })() }));

@@ -706,7 +706,10 @@ def _style_fig(fig, height: int = 300):
         # the readout is a small receipt: charcoal stone, paper words
         hoverlabel=dict(bgcolor=STONE, bordercolor=STONE,
                         font=dict(family="Georgia, serif", color="#EDE9E3", size=13)),
-        transition=dict(duration=380, easing="cubic-in-out"),
+        # no layout transition: an update eased with one, made while its tab is
+        # hidden, kept Plotly's 700px fallback drawing at the real width, so
+        # every chart in a tab was clipped on a phone and half-width on a
+        # desktop (2026-11-19). The cone keeps its own; it is never in a tab.
     )
     fig.update_xaxes(gridcolor=GRID, gridwidth=1, zeroline=False, linecolor=AXIS_LINE, linewidth=1,
                      ticks="outside", tickcolor=AXIS_LINE, tickfont=dict(color="#5D574D", size=12),
@@ -1094,17 +1097,17 @@ with _gungnir_zone:
 # never relabeled; only asymmetric ones (tails, drawdowns, Monte Carlo,
 # factor betas, Bon Voyage) genuinely recompute.
 with _gungnir_zone:
-    _dir_col = st.columns([1.2, 2.6, 1.2])[1]
-    with _dir_col:
-        direction = st.radio(
-            "Which side of the trade are you on?",
-            ["Bullish: long the book", "Bearish: short the book"],
-            horizontal=True, key="bv_direction",
-            help="Bearish reruns the headline, the cone, the crisis replays, Risk "
-                 "Breakdown and the map as if you had sold the same stocks short, "
-                 "reset each day. The Book and the Grit Zone stay long-only. "
-                 "Borrowing fees, margin interest and forced buy-backs are not "
-                 "included, so a real short would do worse than shown.")
+    # on the column's left edge with the heading above it, not centred in a
+    # middle column left from the old all-centred layout (2026-11-19)
+    direction = st.radio(
+        "Which side of the trade are you on?",
+        ["Bullish: long the book", "Bearish: short the book"],
+        horizontal=True, key="bv_direction",
+        help="Bearish reruns the headline, the cone, the crisis replays, Risk "
+             "Breakdown and the map as if you had sold the same stocks short, "
+             "reset each day. The Book and the Grit Zone stay long-only. "
+             "Borrowing fees, margin interest and forced buy-backs are not "
+             "included, so a real short would do worse than shown.")
 bearish = direction.startswith("Bearish")
 _bv_sk_a, _bv_sk_b = ("the short position", "the squeeze anchor") if bearish \
     else ("the high-flyer", "the steady anchor")
@@ -1145,8 +1148,6 @@ with _gungnir_zone:
         f'<div style="font-family:Georgia;font-size:13px;color:#5D574D;max-width:560px;margin:2px auto 0;">'
         f'{"Shorting flips the sketch: the tall block is the stock you bet against, the wide one a stock you own that tends to rise with it, softening a sudden jump. The areas match, so each carries the same share of the risk. A short can lose more than 100%, and borrowing costs are not included." if bearish else "The flyer is narrow and tall: little money, big price swings. The anchor is wide and short: more money, small swings. The areas match, so each name carries the same share of the risk."}'
         f'</div>'
-        f'<a href="#engine" class="cta-btn" style="margin-top:14px;">'
-        f'To the engine<span class="cta-arrow" aria-hidden="true"><svg viewBox="0 0 16 30" fill="none" xmlns="http://www.w3.org/2000/svg"><path class="shaft" d="M8 1 V22" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path class="head" d="M2.5 16.5 L8 22.5 L13.5 16.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a>'
         f'</div>',
         unsafe_allow_html=True)
     # Overwhelm audit (2026-10-29): the sketch and the equation stay - they draw
@@ -1167,6 +1168,12 @@ with _gungnir_zone:
         f'swings (&sigma;, volatility) is the same for both: a stock that swings '
         f'three times as much gets a third of the money.</div>'
         f'</div>',
+        unsafe_allow_html=True)
+    # The way on follows both columns: stacked on a phone, it sat between the
+    # sketch and the plaque and the equation read as an afterthought.
+    st.markdown(
+        '<div class="gungnir-go"><a href="#engine" class="cta-btn">'
+        'To the engine<span class="cta-arrow" aria-hidden="true"><svg viewBox="0 0 16 30" fill="none" xmlns="http://www.w3.org/2000/svg"><path class="shaft" d="M8 1 V22" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path class="head" d="M2.5 16.5 L8 22.5 L13.5 16.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></a></div>',
         unsafe_allow_html=True)
 
 st.markdown(
@@ -1489,7 +1496,8 @@ health = data_health(prices)
 # handed to anonymous viewers. Data is end-of-day and the disk cache already
 # re-pulls past CACHE_MAX_AGE_HOURS; an operator forces a pull with
 # `python -m tools.warm_cache --drill` (RUNBOOK.md).
-fresh = "live" if health["staleness_days"] <= 1 else f"{health['staleness_days']}d old"
+# units spelled out ("3 days old", never "3d"), and the figure never wraps
+fresh = "live" if health["staleness_days"] <= 1 else f"{health['staleness_days']}\u00a0days old"
 # Prices are counted in trading days, returns in daily returns: 504 prices
 # give 503 returns, and one noun with two counts read as a contradiction.
 st.caption(f"Data: {health['rows']} trading days of prices ({len(returns)} daily returns)"
@@ -1945,7 +1953,13 @@ with _bk_more:
             load_grit(tuple(loaded)),
             load_grit(tuple(_bk_px.columns)) if _bk_anchors else None)
 
-        _bk_head.markdown(f'<div class="book-lede">{headline(_the_book)}</div>',
+        # the Book's shares come from its own pairing, not the Weights choice
+        # the big number tests: say so, or 8.3% beside 17.1% reads as a
+        # contradiction (2026-11-19, first-visitor review)
+        _bk_head.markdown(f'<div class="book-lede">{headline(_the_book)} These shares '
+                          f"are the Book's own split, pairing names that lead with steady "
+                          f"anchors; the big number above tests the {alloc_label} "
+                          f'split you chose under Weights.</div>',
                           unsafe_allow_html=True)
 
         # Ruled rows (ME-28): each name is a row under a hairline whose key -
@@ -1980,8 +1994,6 @@ with _bk_more:
             _note = role_note(_d)
             if _note:
                 _lbl += f'<br><span class="role-note">{_note}</span>'
-            _flag = (' &middot;&nbsp;<span class="book-flag">from outside your '
-                     'list</span>' if _d.is_fallback_anchor else "")
             # Redundant on a card that was already excluded FOR capacity - the
             # sentence there already names the breakpoint.
             _bind = (' &middot;&nbsp;<span class="book-flag">trading volume, not '
@@ -1990,7 +2002,7 @@ with _bk_more:
             # leaders and anchors stay on the page; the rest is in the drawer
             (_bk_lead if _d.role in (Role.FLYER, Role.CUSHION) else st).markdown(
                 f'<div class="book-row {_ROW[_d.role]}"><div class="book-role">{_lbl}</div>'
-                f'<div class="book-text">{_d.sentence()}{_flag}{_bind}</div>'
+                f'<div class="book-text">{_d.sentence()}{_bind}</div>'
                 f'{_figs(_d) if _d.role in (Role.FLYER, Role.CUSHION) else ""}</div>',
                 unsafe_allow_html=True)
 
@@ -2131,7 +2143,10 @@ source_txt = f"the {scenario_label} window" if scenario_label else (
     f"({shocked_returns.index[0].date()} to {shocked_returns.index[-1].date()})")
 engine_txt = (
     "a Merton jump-diffusion model (ordinary daily moves plus rare random jumps), calibrated to"
-    if use_jd else "bootstrap Monte Carlo, redrawing real days at random from"
+    if use_jd else
+    f"bootstrap Monte Carlo, redrawing runs of real days, {mc['block_days']} days long on average, from"
+    if mc.get("block_days", 1) > 1 else
+    "bootstrap Monte Carlo, redrawing one real day at a time from"
 )
 st.caption(
     f"Methodology: {mc['n_simulations']:,} simulated years of {mc['horizon_days']} trading days each, "
@@ -2201,11 +2216,12 @@ with tab_grit:
 # The three crises the case studies tell, by their names in
 # HISTORICAL_REGIMES (test_the_case_studies_read_the_live_record).
 CASE_STUDIES = ("COVID-19 crash (2020)", "2022 bear market", "Global Financial Crisis (2008)")
+_CASE_COUNT = {1: "One crash", 2: "Two crashes", 3: "Three crashes"}
 
 
 def _long_date(d) -> str:
     """23 March 2020 - built by hand: %-d is not portable to Windows."""
-    return f"{d.day} {d:%B %Y}"
+    return f"{d.day}\u00a0{d:%B}\u00a0{d:%Y}"  # no-break spaces: a date never wraps
 
 
 def case_row(r) -> str:
@@ -2253,10 +2269,12 @@ with tab_conviction:
         # row each - the fall, the way back, a bottom-day buyer a year on.
         # Every figure is read from this live table; a crisis the record does
         # not cover is skipped, never filled in.
-        panel_head("Case studies", "Three crashes, and the way back")
         _cases = [ctab[ctab["crisis"] == c].iloc[0] for c in CASE_STUDIES
                   if (ctab["crisis"] == c).any()]
         if _cases:
+            # the heading counts the rows under it: a record that covers two
+            # crises shows two, never a typed-in three
+            panel_head("Case studies", f"{_CASE_COUNT[len(_cases)]}, and the way back")
             st.markdown('<div class="case-list">' + "".join(case_row(r) for r in _cases)
                         + "</div>", unsafe_allow_html=True)
             st.caption(
