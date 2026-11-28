@@ -26,6 +26,7 @@ audit/*.json
 !.claude/hooks/
 !.claude/settings.json
 !.claude/workflow.md
+!.claude/feature-map.md
 
 graphify-out/
 
