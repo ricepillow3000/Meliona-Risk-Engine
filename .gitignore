@@ -22,6 +22,10 @@ audit/*.json
 # Local agent-tool state stays out; the reviewed shared skills go in
 .claude/*
 !.claude/skills/
+!.claude/agents/
+!.claude/hooks/
+!.claude/settings.json
+!.claude/workflow.md
 
 graphify-out/
 
