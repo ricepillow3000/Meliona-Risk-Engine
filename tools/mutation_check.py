@@ -11,7 +11,7 @@ bug no test catches is a hole: write the test that kills it (John, 2026-11-10;
 the first run caught 21 of 36, the tests added after it catch all 36; 37-40
 guard end-of-day, 41-45 the 2026-11-12 security review, 46-54 the
 2026-11-13 audit, 55 the 2026-11-17 gzip review, 56-57 streamlit
-1.67's agent api). an unbroken copy runs first: if it is already red, nothing
+1.67's agent api, 58-59 the auto-merge's commit lines). an unbroken copy runs first: if it is already red, nothing
 else runs (2026-11-19: a test that errored in every copy caught every bug).
 takes ~40 minutes on 4 cores: run it after touching src/, serve.py or safe_err.
 exit code 1 if any planted bug survives.
@@ -86,6 +86,8 @@ BUGS = [
     ("M55", "serve.py", "            if not page and len(self.cache) < GZIP_CACHE_MAX:", "            if len(self.cache) < GZIP_CACHE_MAX:", "made-up paths fill the gzip cache"),
     ("M56", "serve.py", 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file", "/_stcore/agent")', 'HIDDEN = ("/_stcore/metrics", "/_stcore/upload_file")', "the agent API's routes answer strangers"),
     ("M57", ".streamlit/config.toml", "enableAgentApi = false\n", "enableAgentApi = true\n", "a script drives the app over HTTP"),
+    ("M58", ".github/workflows/agent-automerge.yml", '          if not re.search(r"^co-authored-by:.*claude"', '          if re.search(r"^co-authored-by:.*claude"', "no merge is ever co-authored"),
+    ("M59", ".github/workflows/agent-automerge.yml", "claude\\.ai/code|claude\\.com/claude-code|^claude-session:", "^claude-session:", "a Claude Code link lands on main"),
 ]
 # only caches stay out: tests read .claude/skills and audit/ (left out, they
 # errored in every copy and were credited with every catch, 2026-11-19)

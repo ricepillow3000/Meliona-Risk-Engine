@@ -45,11 +45,12 @@ jobs:
         if: env.GATE != ''
         run: eval "$GATE"
 
-      - name: No Claude lines in the commits
+      # a co-author line is fine (John, 2026-11-28); a Claude Code link never is
+      - name: No Claude Code links in the commits
         run: |
           msgs=$(gh api --paginate "repos/$GH_REPO/pulls/$PR/commits?per_page=100" --jq '.[].commit.message')
-          if grep -inE 'co-authored-by:.*claude|claude-session:|claude\.ai/code/session' <<<"$msgs"; then
-            echo "::error::a commit carries a Claude line"
+          if grep -inE 'claude-session:|claude\.ai/code|claude\.com/claude-code' <<<"$msgs"; then
+            echo "::error::a commit carries a Claude Code link"
             exit 1
           fi
 
@@ -126,14 +127,26 @@ jobs:
         env:
           PR: ${{ steps.pr.outputs.pr }}
           SHA: ${{ steps.pr.outputs.sha }}
+          BASE: ${{ steps.pr.outputs.base }}
         run: |
           if [ "$(gh pr view "$PR" --json isDraft -q .isDraft)" != false ]; then
             echo "::notice::back to draft, not merging"
             exit 0
           fi
           title=$(gh pr view "$PR" --json title -q .title)
-          body=$(gh pr view "$PR" --json body -q .body)
-          body=$(grep -viE '^🤖 Generated with|claude\.ai/code/session|^Co-Authored-By:.*Claude|^Claude-Session:' <<<"$body" || true)
+          # no Claude Code link in any commit; every other merge on main is co-authored, no model name
+          body=$(BODY="$(gh pr view "$PR" --json body -q .body)" \
+                 LAST="$(gh api "repos/$GH_REPO/commits/$BASE" --jq .commit.message)" python3 - <<'PY'
+          import os, re
+          drop = re.compile(r"claude\.ai/code|claude\.com/claude-code|^claude-session:|^co-authored-by:.*claude", re.I)
+          lines = [ln for ln in os.environ["BODY"].splitlines() if not drop.search(ln)]
+          while lines and lines[-1].strip() in ("", "---"):
+              lines.pop()
+          if not re.search(r"^co-authored-by:.*claude", os.environ["LAST"], re.I | re.M):
+              lines += ["", "Co-Authored-By: Claude <noreply@anthropic.com>"]
+          print("\n".join(lines).strip())
+          PY
+          )
           gh pr merge "$PR" --squash --match-head-commit "$SHA" --subject "$title (#$PR)" --body "$body"
           echo "merged=true" >> "$GITHUB_OUTPUT"
 
